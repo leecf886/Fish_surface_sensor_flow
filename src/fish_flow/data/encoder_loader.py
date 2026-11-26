@@ -4,7 +4,7 @@
 1. 调用基础表面传感器模块，按传入的 train_re / val_re 与 sensor_indices 提取原始数据；
 2. 仅在训练集上拟合统计量并完成归一化：
    - MLP：展平为 [N, 3*K]，按列 Z-score 标准化；
-   - DeepSets：保留 [N, K, 3] 原始读数与坐标 [K, 2]，拟合 3 通道均值/标准差供模型内部使用；
+   - DeepSets：拟合 3 通道均值/标准差并直接对 [N, K, 3] 做通道标准化，同时保留坐标 [K, 2]；
    - 目标标签统一为 4 维 [Re_norm, St_norm, sin(phi), cos(phi)]；
 3. 打印加载完成摘要并返回 DataLoader 与归一化器，供训练 pipeline 衔接模型并落盘。
 """
@@ -145,20 +145,18 @@ class EncoderDataset(Dataset):
 
 
 class DeepSetsSubsetCollator:
-    """DeepSets 动态子集采样与可选 dropout / 噪声增强整理器。"""
+    """DeepSets 动态子集采样与可选 dropout / 噪声增强整理器（输入已按通道标准化）。"""
 
     def __init__(
         self,
         pool_size: int,
         sensor_counts: Sequence[int],
-        chan_std: np.ndarray,
         seed: int = 42,
         token_dropout_prob: float = 0.0,
         sensor_noise_rel_std: float = 0.0,
     ) -> None:
         self.pool_size = int(pool_size)
         self.sensor_counts = tuple(sorted({int(c) for c in sensor_counts}))
-        self.chan_std = np.asarray(chan_std, dtype=np.float32).reshape(1, 1, 3)
         self.token_dropout_prob = float(token_dropout_prob)
         self.sensor_noise_rel_std = float(sensor_noise_rel_std)
         self._rng = np.random.default_rng(seed)
@@ -184,8 +182,9 @@ class DeepSetsSubsetCollator:
                 mask_np[int(row), int(self._rng.integers(0, k))] = True
 
         if self.sensor_noise_rel_std > 0.0:
+            # 输入已按通道标准差归一化，直接注入标准差为 sensor_noise_rel_std 的高斯噪声
             noise = self._rng.normal(0.0, 1.0, size=(bsz, k, 3)).astype(np.float32)
-            noise *= self.sensor_noise_rel_std * self.chan_std * mask_np[:, :, None]
+            noise *= self.sensor_noise_rel_std * mask_np[:, :, None]
             uvp = uvp + torch.from_numpy(noise)
 
         mask = torch.from_numpy(mask_np)
@@ -296,18 +295,17 @@ def load_encoder_training_data(
         x_norm = Normalizer(method=x_norm_method).fit(x_train_flat)
         train_x = x_norm.transform(x_train_flat)
     else:
-        # DeepSets：保留 [N, K, 3] 原始读数，仅拟合 3 通道均值/标准差供模型内部标准化
+        # DeepSets：拟合 3 通道均值/标准差并直接对 [N, K, 3] 做通道标准化
         flat_3 = train_raw["uvp"].reshape(-1, 3).astype(np.float64)
         chan_mean = flat_3.mean(axis=0)
         std_3 = flat_3.std(axis=0)
         chan_std = np.where(np.abs(std_3) < 1e-12, 1.0, std_3)
-        train_x = train_raw["uvp"]
+        train_x = ((train_raw["uvp"] - chan_mean) / chan_std).astype(np.float32)
 
         if random_subset:
             train_collate = DeepSetsSubsetCollator(
                 pool_size=len(selected_idx),
                 sensor_counts=training_sensor_counts,
-                chan_std=chan_std,
                 seed=seed,
                 token_dropout_prob=token_dropout_prob,
                 sensor_noise_rel_std=sensor_noise_rel_std,
@@ -346,7 +344,7 @@ def load_encoder_training_data(
             assert x_norm is not None
             val_x = x_norm.transform(val_raw["uvp"].reshape(len(val_raw["uvp"]), -1))
         else:
-            val_x = val_raw["uvp"]
+            val_x = ((val_raw["uvp"] - chan_mean) / chan_std).astype(np.float32)
         val_ds = _build_ds(val_raw, val_x)
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
 
