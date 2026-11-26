@@ -1,48 +1,28 @@
-"""编码器公用训练数据加载与归一化模块。
+"""编码器公用训练数据加载与归一化模块（纯参数接口，不包含配置文件解析）。
 
 工作流程：
-1. 调用基础表面传感器模块，加载 504 个壁面单元中心坐标与各雷诺数原始传感器读数；
-2. 读取模型配置文件（可与 checkpoint 同目录存放），按划分选取 train/val 雷诺数与传感器布局；
-3. 仅在训练集上拟合统计量并完成归一化（MLP 展平逐列标准化，DeepSets 保留集合与 3 通道均值方差），
-   构造 4 维回归目标 [Re_norm, St_norm, sin(phase), cos(phase)]；
-4. 打印加载完成摘要并输出供后续 model / trainer 使用的 DataLoader 与归一化器。
+1. 调用基础表面传感器模块，按传入的 train_re / val_re 与 sensor_indices 提取原始数据；
+2. 仅在训练集上拟合统计量并完成归一化：
+   - MLP：展平为 [N, 3*K]，按列 Z-score 标准化；
+   - DeepSets：保留 [N, K, 3] 原始读数与坐标 [K, 2]，拟合 3 通道均值/标准差供模型内部使用；
+   - 目标标签统一为 4 维 [Re_norm, St_norm, sin(phi), cos(phi)]；
+3. 打印加载完成摘要并返回 DataLoader 与归一化器，供训练 pipeline 衔接模型并落盘。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import json
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset, default_collate
 
 from fish_flow.data.surface_sensors import (
-    BaseSurfaceMesh,
     load_base_surface_cases,
     load_base_surface_mesh,
     select_surface_sensors,
 )
-
-# 16 个鱼体绕流工况的默认折划分
-DEFAULT_FOLDS: Dict[str, Dict[str, List[int]]] = {
-    "default": {
-        "train_re": [13500, 13750, 14000, 14500, 15000, 15250, 15500, 15750, 16000, 16500, 17000, 17500],
-        "val_re": [14750, 16750],
-        "test_re": [14250, 16250],
-    },
-    "loo_14750": {
-        "train_re": [13500, 13750, 14000, 14500, 15000, 15250, 15500, 15750, 16000, 16500, 16750, 17000, 17500],
-        "val_re": [14750],
-        "test_re": [14250, 16250],
-    },
-    "loo_16750": {
-        "train_re": [13500, 13750, 14000, 14500, 14750, 15000, 15250, 15500, 15750, 16000, 16500, 17000, 17500],
-        "val_re": [16750],
-        "test_re": [14250, 16250],
-    },
-}
 
 
 @dataclass
@@ -214,9 +194,8 @@ class DeepSetsSubsetCollator:
 
 @dataclass
 class LoadedEncoderData:
-    """加载完成后的统一数据打包对象，直接对接 model 与 trainer。"""
+    """加载完成后的统一数据对象，供训练 pipeline 传给模型并序列化归一化参数。"""
 
-    config: Dict[str, Any]
     encoder_type: str
     train_loader: DataLoader
     val_loader: Optional[DataLoader]
@@ -232,46 +211,29 @@ class LoadedEncoderData:
     train_re: List[int] = field(default_factory=list)
     val_re: List[int] = field(default_factory=list)
 
-    def save_meta_near_ckpt(self, ckpt_dir: str | Path, filename: str = "data_config.json") -> Path:
-        """将模型配置、实际传感器布局与拟合好的归一化参数保存到 ckpt 同目录。"""
-        out_path = Path(ckpt_dir) / filename
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        payload = dict(self.config)
-        payload.update(
-            {
-                "encoder_type": self.encoder_type,
-                "train_re": self.train_re,
-                "val_re": self.val_re,
-                "sensor_indices": self.sensor_indices.tolist(),
-                "xy_nd": self.xy_nd.tolist(),
-                "re_normalizer": self.re_normalizer.to_dict(),
-                "st_normalizer": self.st_normalizer.to_dict(),
-                "x_normalizer": None if self.x_normalizer is None else self.x_normalizer.to_dict(),
-                "chan_mean": None if self.chan_mean is None else self.chan_mean.tolist(),
-                "chan_std": None if self.chan_std is None else self.chan_std.tolist(),
-            }
-        )
-        out_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-        return out_path
+    def normalizers_to_dict(self) -> Dict[str, Any]:
+        """导出传感器布局与拟合好的归一化统计量，方便训练 pipeline 写入 ckpt 同目录配置。"""
+        return {
+            "encoder_type": self.encoder_type,
+            "train_re": self.train_re,
+            "val_re": self.val_re,
+            "sensor_indices": self.sensor_indices.tolist(),
+            "xy_nd": self.xy_nd.tolist(),
+            "re_normalizer": self.re_normalizer.to_dict(),
+            "st_normalizer": self.st_normalizer.to_dict(),
+            "x_normalizer": None if self.x_normalizer is None else self.x_normalizer.to_dict(),
+            "chan_mean": None if self.chan_mean is None else self.chan_mean.tolist(),
+            "chan_std": None if self.chan_std is None else self.chan_std.tolist(),
+        }
 
 
-def _resolve_sensor_indices(mesh: BaseSurfaceMesh, cfg: Mapping[str, Any]) -> np.ndarray:
-    """根据配置解析要从 504 个基础表面传感器中选取的下标。"""
-    mode = str(cfg.get("layout_mode", "uniform")).lower()
-    if mode in ("all", "random_subset"):
-        return np.arange(len(mesh.wall_cell_ids), dtype=np.int64)
-    if mode == "cand60":
-        return mesh.cand60_wall_indices.astype(np.int64)
-    if mode == "indices":
-        return np.asarray(cfg["sensor_indices"], dtype=np.int64)
-
-    # uniform 模式：按闭合轮廓归一化弧长等距选 K 个点
-    k = int(cfg.get("n_sensors", 12))
-    targets = np.linspace(0.0, 1.0, k, endpoint=False)
-    used = np.zeros(len(mesh.wall_arc), dtype=bool)
+def select_uniform_arc_indices(wall_arc: np.ndarray, n_sensors: int) -> np.ndarray:
+    """按闭合轮廓归一化弧长等距挑选 n_sensors 个基础表面传感器下标。"""
+    targets = np.linspace(0.0, 1.0, int(n_sensors), endpoint=False)
+    used = np.zeros(len(wall_arc), dtype=bool)
     chosen: List[int] = []
     for t in targets:
-        dist = np.abs(mesh.wall_arc - t)
+        dist = np.abs(wall_arc - t)
         dist = np.minimum(dist, 1.0 - dist)
         dist[used] = np.inf
         best = int(np.argmin(dist))
@@ -280,90 +242,93 @@ def _resolve_sensor_indices(mesh: BaseSurfaceMesh, cfg: Mapping[str, Any]) -> np
     return np.asarray(chosen, dtype=np.int64)
 
 
-def _resolve_splits(cfg: Mapping[str, Any]) -> Tuple[List[int], List[int]]:
-    """从配置直接读取或按 fold 名称解析 train_re 与 val_re。"""
-    if "train_re" in cfg and "val_re" in cfg:
-        return [int(r) for r in cfg["train_re"]], [int(r) for r in cfg["val_re"]]
-    fold_name = str(cfg.get("fold", "default"))
-    fold = DEFAULT_FOLDS[fold_name]
-    return list(fold["train_re"]), list(fold["val_re"])
+def load_encoder_training_data(
+    *,
+    processed_dir: str | Path = "data/processed",
+    train_re: Sequence[int],
+    val_re: Optional[Sequence[int]] = None,
+    encoder_type: str = "mlp",
+    sensor_indices: Optional[Sequence[int]] = None,
+    batch_size: int = 256,
+    seed: int = 42,
+    periodic_only: bool = True,
+    x_norm_method: str = "standard",
+    target_norm_method: str = "standard",
+    random_subset: bool = False,
+    training_sensor_counts: Sequence[int] = (6, 12, 24, 48),
+    token_dropout_prob: float = 0.0,
+    sensor_noise_rel_std: float = 0.0,
+) -> LoadedEncoderData:
+    """公用训练数据加载函数：接收由训练 pipeline 解析好的显式参数并输出 DataLoader。"""
+    enc = str(encoder_type).lower()
+    train_re_list = [int(r) for r in train_re]
+    val_re_list = [] if val_re is None else [int(r) for r in val_re]
 
-
-def load_encoder_training_data(config: Union[str, Path, Mapping[str, Any]]) -> LoadedEncoderData:
-    """公用训练数据加载入口：读配置 -> 调基础表面传感器 -> 训练集拟合归一化 -> 构造 DataLoader。"""
-    if isinstance(config, (str, Path)):
-        cfg: Dict[str, Any] = json.loads(Path(config).read_text(encoding="utf-8"))
-    else:
-        cfg = dict(config)
-
-    processed_dir = Path(cfg.get("processed_dir", "data/processed"))
-    encoder_type = str(cfg.get("encoder_type", "mlp")).lower()
-    batch_size = int(cfg.get("batch_size", 256))
-    seed = int(cfg.get("seed", 42))
-    periodic_only = bool(cfg.get("periodic_only", True))
-    train_re, val_re = _resolve_splits(cfg)
-
-    # 1. 调用基础表面传感器模块，加载 504 点几何与训练/验证工况原始读数
+    # 1. 调用基础表面传感器模块，加载几何与 train/val 原始读数
     mesh = load_base_surface_mesh(processed_dir)
-    sensor_indices = _resolve_sensor_indices(mesh, cfg)
-    train_cases = load_base_surface_cases(processed_dir, re_list=train_re)
-    train_raw = select_surface_sensors(train_cases, mesh, sensor_indices, periodic_only=periodic_only)
+    selected_idx = (
+        np.arange(len(mesh.wall_cell_ids), dtype=np.int64)
+        if sensor_indices is None
+        else np.asarray(sensor_indices, dtype=np.int64)
+    )
+
+    train_cases = load_base_surface_cases(processed_dir, re_list=train_re_list)
+    train_raw = select_surface_sensors(train_cases, mesh, selected_idx, periodic_only=periodic_only)
 
     val_raw: Optional[Dict[str, np.ndarray]] = None
-    if val_re:
-        val_cases = load_base_surface_cases(processed_dir, re_list=val_re)
-        val_raw = select_surface_sensors(val_cases, mesh, sensor_indices, periodic_only=periodic_only)
+    if val_re_list:
+        val_cases = load_base_surface_cases(processed_dir, re_list=val_re_list)
+        val_raw = select_surface_sensors(val_cases, mesh, selected_idx, periodic_only=periodic_only)
 
     # 2. 仅在训练集上拟合目标归一化器 (Re, St)
-    target_method = str(cfg.get("target_norm_method", "standard"))
-    re_norm = Normalizer(method=target_method).fit(train_raw["re"])
-    st_norm = Normalizer(method=target_method).fit(train_raw["st"])
+    re_norm = Normalizer(method=target_norm_method).fit(train_raw["re"])
+    st_norm = Normalizer(method=target_norm_method).fit(train_raw["st"])
 
-    train_re_n = re_norm.transform(train_raw["re"])
-    train_st_n = st_norm.transform(train_raw["st"])
-
-    # 3. 按编码器类型分别处理输入特征归一化
+    # 3. 按编码器类型处理输入特征归一化
     x_norm: Optional[Normalizer] = None
     chan_mean: Optional[np.ndarray] = None
     chan_std: Optional[np.ndarray] = None
     train_collate = None
 
-    if encoder_type == "mlp":
-        # 原代码约定：MLP 将传感器展平为 [N, 3*K]，直接做逐列 Z-score 标准化
+    if enc == "mlp":
+        # MLP：展平为 [N, 3*K] 后做逐列 Z-score 标准化
         x_train_flat = train_raw["uvp"].reshape(len(train_raw["uvp"]), -1)
-        x_norm = Normalizer(method=str(cfg.get("x_norm_method", "standard"))).fit(x_train_flat)
+        x_norm = Normalizer(method=x_norm_method).fit(x_train_flat)
         train_x = x_norm.transform(x_train_flat)
     else:
-        # 原代码约定：DeepSets 保留 [N, K, 3] 原始读数，仅计算 3 通道均值方差供模型 forward 内标准化
+        # DeepSets：保留 [N, K, 3] 原始读数，仅拟合 3 通道均值/标准差供模型内部标准化
         flat_3 = train_raw["uvp"].reshape(-1, 3).astype(np.float64)
         chan_mean = flat_3.mean(axis=0)
         std_3 = flat_3.std(axis=0)
         chan_std = np.where(np.abs(std_3) < 1e-12, 1.0, std_3)
         train_x = train_raw["uvp"]
 
-        if str(cfg.get("layout_mode", "")).lower() == "random_subset":
+        if random_subset:
             train_collate = DeepSetsSubsetCollator(
-                pool_size=len(sensor_indices),
-                sensor_counts=cfg.get("training_sensor_counts", (6, 12, 24, 48)),
+                pool_size=len(selected_idx),
+                sensor_counts=training_sensor_counts,
                 chan_std=chan_std,
                 seed=seed,
-                token_dropout_prob=float(cfg.get("token_dropout_prob", 0.0)),
-                sensor_noise_rel_std=float(cfg.get("sensor_noise_rel_std", 0.0)),
+                token_dropout_prob=token_dropout_prob,
+                sensor_noise_rel_std=sensor_noise_rel_std,
             )
 
-    train_ds = EncoderDataset(
-        encoder_type=encoder_type,
-        x_or_uvp=train_x,
-        xy_nd=train_raw["xy_nd"],
-        re_norm=train_re_n,
-        st_norm=train_st_n,
-        phase_sin=train_raw["phase_sin"],
-        phase_cos=train_raw["phase_cos"],
-        re_raw=train_raw["re"],
-        st_raw=train_raw["st"],
-        phase_true=train_raw["phase"],
-        re_id=train_raw["re_id"],
-    )
+    def _build_ds(raw: Dict[str, np.ndarray], x_feat: np.ndarray) -> EncoderDataset:
+        return EncoderDataset(
+            encoder_type=enc,
+            x_or_uvp=x_feat,
+            xy_nd=raw["xy_nd"],
+            re_norm=re_norm.transform(raw["re"]),
+            st_norm=st_norm.transform(raw["st"]),
+            phase_sin=raw["phase_sin"],
+            phase_cos=raw["phase_cos"],
+            re_raw=raw["re"],
+            st_raw=raw["st"],
+            phase_true=raw["phase"],
+            re_id=raw["re_id"],
+        )
+
+    train_ds = _build_ds(train_raw, train_x)
     gen = torch.Generator().manual_seed(seed)
     train_loader = DataLoader(
         train_ds,
@@ -377,49 +342,35 @@ def load_encoder_training_data(config: Union[str, Path, Mapping[str, Any]]) -> L
     val_ds: Optional[EncoderDataset] = None
     val_loader: Optional[DataLoader] = None
     if val_raw is not None:
-        if encoder_type == "mlp":
+        if enc == "mlp":
             assert x_norm is not None
             val_x = x_norm.transform(val_raw["uvp"].reshape(len(val_raw["uvp"]), -1))
         else:
             val_x = val_raw["uvp"]
-
-        val_ds = EncoderDataset(
-            encoder_type=encoder_type,
-            x_or_uvp=val_x,
-            xy_nd=val_raw["xy_nd"],
-            re_norm=re_norm.transform(val_raw["re"]),
-            st_norm=st_norm.transform(val_raw["st"]),
-            phase_sin=val_raw["phase_sin"],
-            phase_cos=val_raw["phase_cos"],
-            re_raw=val_raw["re"],
-            st_raw=val_raw["st"],
-            phase_true=val_raw["phase"],
-            re_id=val_raw["re_id"],
-        )
+        val_ds = _build_ds(val_raw, val_x)
         val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
 
-    # 4. 打印加载完成摘要，后续直接衔接 model 模块
+    # 4. 打印加载完成摘要
     val_count = 0 if val_ds is None else len(val_ds)
     print(
-        f"数据已加载完成 | encoder={encoder_type} | "
-        f"train={len(train_ds)}帧 ({len(train_re)}工况) | val={val_count}帧 ({len(val_re)}工况) | "
-        f"sensors={len(sensor_indices)}"
+        f"数据已加载完成 | encoder={enc} | "
+        f"train={len(train_ds)}帧 ({len(train_re_list)}工况) | val={val_count}帧 ({len(val_re_list)}工况) | "
+        f"sensors={len(selected_idx)}"
     )
 
     return LoadedEncoderData(
-        config=cfg,
-        encoder_type=encoder_type,
+        encoder_type=enc,
         train_loader=train_loader,
         val_loader=val_loader,
         train_dataset=train_ds,
         val_dataset=val_ds,
-        sensor_indices=sensor_indices,
+        sensor_indices=selected_idx,
         xy_nd=train_raw["xy_nd"],
         re_normalizer=re_norm,
         st_normalizer=st_norm,
         x_normalizer=x_norm,
         chan_mean=chan_mean,
         chan_std=chan_std,
-        train_re=train_re,
-        val_re=val_re,
+        train_re=train_re_list,
+        val_re=val_re_list,
     )

@@ -1,4 +1,10 @@
-"""鱼体绕流神经网络架构定义（MLP、DeepSets、pPINN），仅包含纯网络结构。"""
+"""鱼体绕流神经网络架构模块（纯参数接口，不包含配置文件解析与归一化逻辑）。
+
+仅提供供训练 / 推理 pipeline 调用的纯 PyTorch 网络结构：
+1. `SensorMLP`：固定布局表面传感器编码器，输入 `[B, 3*K]` -> 输出 `[B, 4]`；
+2. `DynamicSetSensorEncoder`：置换不变动态集合编码器（DeepSets），输入 `([B, K, 3], [B, K, 2], mask)` -> 输出 `[B, 4]`；
+3. `PPINNModel`：6 维输入参数化物理信息神经网络（pPINN），输入 `[N, 6]` -> 输出 `[N, 3]`。
+"""
 from __future__ import annotations
 
 from typing import Dict, Optional, Sequence, Type
@@ -32,7 +38,7 @@ def _make_mlp(
 
 
 class SensorMLP(nn.Module):
-    """固定传感器布局 MLP 编码器：展平输入 [B, 3*K] -> [B, 4]。"""
+    """固定传感器布局 MLP 编码器：展平输入 `[B, 3*K]` -> `[B, 4]`。"""
 
     def __init__(
         self,
@@ -45,11 +51,12 @@ class SensorMLP(nn.Module):
         self.net = _make_mlp(input_dim, hidden_dims, output_dim, activation)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """前向计算：`[B, input_dim]` -> `[B, output_dim]`。"""
         return self.net(x)
 
 
 class DynamicSetSensorEncoder(nn.Module):
-    """置换不变动态传感器集合编码器（DeepSets）：([B, K, 3], [B, K, 2], mask) -> [B, 4]。"""
+    """置换不变动态传感器集合编码器（DeepSets）：`([B, K, 3], [B, K, 2], mask)` -> `[B, 4]`。"""
 
     def __init__(
         self,
@@ -79,6 +86,7 @@ class DynamicSetSensorEncoder(nn.Module):
         pos: Optional[torch.Tensor] = None,
         mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
+        """前向计算：拼接逐点特征并按有效掩码池化后回归目标状态。"""
         tokens = values if pos is None else torch.cat([values, pos], dim=-1)
         emb = self.phi(tokens)
 
@@ -113,7 +121,7 @@ class DynamicSetSensorEncoder(nn.Module):
 
 
 class PPINNModel(nn.Module):
-    """参数化物理信息神经网络（pPINN）：6 维特征 [x*, y*, Re*, St*, sinφ, cosφ] -> [u*, v*, p*]。"""
+    """参数化物理信息神经网络（pPINN）：6 维特征 `[x*, y*, Re*, St*, sinφ, cosφ]` -> `[u*, v*, p*]`。"""
 
     def __init__(
         self,
@@ -126,4 +134,5 @@ class PPINNModel(nn.Module):
         self.net = _make_mlp(in_dim, hidden_dims, out_dim, activation)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """前向计算：`[N, in_dim]` -> `[N, out_dim]`。"""
         return self.net(x)
