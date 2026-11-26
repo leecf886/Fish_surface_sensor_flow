@@ -1,7 +1,7 @@
 # Reference codebase (local-only, do not commit)
 _ref/
 data_files/
-data/
+/data/
 msh/*
 !msh/fish_fluent.msh
 
