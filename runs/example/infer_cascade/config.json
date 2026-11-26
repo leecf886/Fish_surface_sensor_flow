@@ -1,0 +1,13 @@
+{
+  "mode": "cascade",
+  "encoder_ckpt": "runs/example/deepsets/best_deepsets.pt",
+  "ppinn_ckpt": "runs/example/ppinn/best_ppinn.pt",
+  "processed_dir": "data/processed",
+  "re_list": [14750, 16750],
+  "output_dir": "runs/infer_cascade",
+  "output_name": "cascade_pred.npz",
+  "periodic_only": true,
+  "batch_size": 1024,
+  "chunk_size": 16384,
+  "device": "auto"
+}

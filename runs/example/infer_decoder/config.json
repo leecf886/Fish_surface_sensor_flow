@@ -1,0 +1,11 @@
+{
+  "mode": "decoder",
+  "ppinn_ckpt": "runs/example/ppinn/best_ppinn.pt",
+  "processed_dir": "data/processed",
+  "re_list": [14750, 16750],
+  "output_dir": "runs/infer_decoder",
+  "output_name": "decoder_pred.npz",
+  "periodic_only": true,
+  "chunk_size": 16384,
+  "device": "auto"
+}

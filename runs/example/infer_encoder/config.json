@@ -1,0 +1,11 @@
+{
+  "mode": "encoder",
+  "encoder_ckpt": "runs/example/mlp/best_mlp.pt",
+  "processed_dir": "data/processed",
+  "re_list": [14750, 16750],
+  "output_dir": "runs/infer_encoder",
+  "output_name": "encoder_pred.npz",
+  "periodic_only": true,
+  "batch_size": 1024,
+  "device": "auto"
+}
