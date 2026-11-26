@@ -58,6 +58,7 @@ flowchart LR
 | `src/fish_flow/inference/data.py` | 复用基础数据模块读取未归一化 `.h5` 传感器读数与解码器参数空间/ROI 坐标 |
 | `src/fish_flow/inference/runner.py` | 推理配置解析、复制原 `config.json` 至输出目录并导出 `.npz` 结果 |
 | `src/fish_flow/postprocess.py` | 推理 `.npz` 与原始 `.h5` 对齐加载、编码器物理误差、全 ROI 与尾流区流场指标及对比云图绘制 |
+| **`pyproject.toml` / `environment.yml` / `requirements.txt`** | 项目打包元信息与 Conda / pip 一键环境配置 |
 | **`tests/`** | |
 | `tests/test_{training,inference,postprocess}_pipeline.py` | 训练、推理与后处理端到端连通性及数学不变性单元测试 |
 
@@ -65,14 +66,23 @@ flowchart LR
 
 ## 2. 整体流程
 
-运行前请先激活环境并设置模块搜索路径（后续所有命令均在仓库根目录执行）：
+### 2.0 一键环境配置
 
-```powershell
-conda activate surface_cylinder_flow
-$env:PYTHONPATH = "src"
+在仓库根目录执行以下任一命令即可完成环境创建、依赖安装与 `fish_flow` 可编辑安装（安装后无需手动设置 `PYTHONPATH`）：
+
+**方式一：Conda 一键配置（推荐，含 CUDA 12.4 PyTorch）**
+
+```bash
+conda env create -f environment.yml && conda activate fish_flow
 ```
 
-> Linux/macOS 请使用 `export PYTHONPATH=src`。
+**方式二：已有 Python（>=3.10）环境 pip 一键配置**
+
+```bash
+pip install -r requirements.txt
+```
+
+> 若未执行 `-e .` 安装而在已有环境中直接运行，需先设置搜索路径：Windows PowerShell 执行 `$env:PYTHONPATH = "src"`，Linux/macOS 执行 `export PYTHONPATH=src`。
 
 ### 2.1 数据预处理（`.msh` + `.npz` → `.h5`）
 
