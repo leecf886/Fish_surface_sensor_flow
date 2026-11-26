@@ -1,0 +1,60 @@
+# Reference codebase (local-only, do not commit)
+_ref/
+data_files/
+data/
+msh/*
+!msh/fish_fluent.msh
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project data and checkpoints (do not commit large artifacts)
+*.h5
+*.hdf5
+*.pt
+*.pth
+*.npz
+*.pkl
+
+# Local machine path configuration
+configs/paths.json
+
+# Outputs & Run artifacts
+output/
+outputs/
+runs/
+tmp/
+tmp*/
+logs/
+*.log
