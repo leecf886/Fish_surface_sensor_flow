@@ -200,3 +200,55 @@ python scripts/postprocess.py --mode cascade --pred runs/infer_cascade --raw dat
 ```powershell
 pytest -v tests/test_training_pipeline.py tests/test_inference_pipeline.py tests/test_postprocess_pipeline.py
 ```
+
+---
+
+## 3. 后续实验规划
+
+围绕表面传感器编码器（`MLP` / `DeepSets`）、物理信息解码器（`pPINN`）以及线性降阶基线（`SurfacePOD`），后续消融与对比实验均遵循 **“单变量控制 + 原始精度与串联精度双指标评估（`encoder` / `decoder` + `cascade`）”** 原则，并在最终对比中使用锁定测试工况 `test_re = [14250, 16250]`。
+
+> **POD 基线统一口径**：`SurfacePOD` 基底与线性映射仅在 `train_re` 上拟合（严禁使用 `val_re` / `test_re`），与各实验同传感器布局/同噪声输入下进行流场重构精度（全 ROI 与尾流区相对 $L_2$、Gauge 压强误差）横向对比。
+
+### 3.1 实验一：不同激活函数对 DeepSets 与 MLP 性能的影响
+
+- **研究目的**：对比不同非线性激活函数对编码器状态识别精度（`Re / St / Phase`）以及串联流场重构精度的影响，并以 `SurfacePOD` 作为无非线性编码的线性流场重构参考线。
+- **实验设计**：
+  - **自变量**：`model.activation`（当前已支持 `relu`、`tanh`、`gelu`、`identity`，可按需扩展 `silu` 等）。
+  - **控制变量**：固定传感器配置、训练轮数、学习率与随机种子，并固定同一份最优 `pPINN` 权重用于串联推理。
+  - **评估路径**：`encoder` 单独推理（原始回归与圆周相位误差）+ `cascade` 串联推理（全 ROI 与尾流区流场误差），并与同测点 `SurfacePOD` 重构精度对比。
+
+### 3.2 实验二：不同传感器数量对 DeepSets、MLP 与 POD 基线性能的影响（固定 60 点候选池内均匀取点）
+
+- **研究目的**：验证稀疏测点预算变化下，固定布局 `MLP`、动态集合 `DeepSets` 与线性 `SurfacePOD` 的重构精度退化规律。
+- **实验设计**：
+  - **候选总池**：统一限定在 `mesh.h5` 预置的 60 个等弧长候选点（`cand60`）内部，按弧长均匀抽取不同传感器数量 $K$（例如 $K \in \{6, 12, 18, 24, 36, 48, 60\}$）。
+  - **模型对比方式**：
+    - `MLP`：针对每个 $K$ 分别训练与推理对应输入维度 `3*K` 的固定网络；
+    - `DeepSets`：在 `sensor_pool = "cand60"` 上进行多预算随机子集训练（仅训练一次），推理时依次在 60 点内均匀取 $K$ 点测试动态泛化能力；
+    - `SurfacePOD`：在完全相同的 $K$ 个传感器读数上拟合线性观测-模态映射，作为全量级对比基线。
+  - **评估路径**：`encoder` 原始精度 + `cascade` 串联精度 + `SurfacePOD` 流场重构精度。
+  - **代码衔接备注**：当前 `uniform_arc` 是在 504 全壁面点上等距抽取；正式开展本实验前，需在选位逻辑中支持“仅在 `cand60` 子池内按弧长均匀抽点”（或由脚本生成对应的 `sensor_indices`），并补齐 `SurfacePOD` 模块。
+
+### 3.3 实验三：不同 PDE 权重对 pPINN 原始误差及串联推理精度的影响
+
+- **研究目的**：探究物理控制方程残差约束强度对纯解码重构精度以及上游编码器误差传播敏感度的影响，并以 `SurfacePOD` 与纯数据驱动基线（`lambda_phys = 0.0`）作参照。
+- **实验设计**：
+  - **自变量**：`training.lambda_phys`（如 `0.0`、`0.01`、`0.1`、`1.0`、`5.0` 等）及可选 `pde_weight_schedule`（`constant / linear / cosine` 等）。
+  - **控制变量**：固定 `pPINN` 网络结构与 5D 配点设置，并固定同一组最优编码器权重（`MLP` / `DeepSets`）作为串联上游。
+  - **评估路径**：`decoder` 单独推理（真实参数输入下的 `pPINN` 原始流场误差）+ `cascade` 串联推理（编码器预测状态驱动下的端到端流场误差），并与 `SurfacePOD` 基线对比。
+
+### 3.4 实验四：不同高斯噪声强度对 DeepSets、MLP 与 POD 基线性能的影响
+
+- **研究目的**：评估传感器物理读数受到测量噪声污染时，`MLP`、`DeepSets` 串联重构与 `SurfacePOD` 线性重构的鲁棒性。
+- **实验设计**：
+  - **自变量**：推理期注入传感器物理读数 `[Ux, Uy, p_kin]` 的高斯噪声相对强度 $\eta$（例如 $\eta \in \{0\%, 1\%, 3\%, 5\%, 10\%\}$，以训练集各通道标准差 $\sigma_{\text{train}, c}$ 为基准：$\tilde{x}_c = x_c + \mathcal{N}(0, (\eta \cdot \sigma_{\text{train}, c})^2)$）。
+  - **对比维度**：在同噪声输入下横向对比 `MLP`、`DeepSets`（含无噪训练与开启 `sensor_noise_rel_std` 增强训练两版）以及 `SurfacePOD`。
+  - **评估路径**：`encoder` 原始精度 + `cascade` 串联精度 + `SurfacePOD` 含噪重构精度（固定多组测试噪声种子求均值与标准差）。
+  - **代码衔接备注**：当前仅 `DeepSets` 训练期支持 `sensor_noise_rel_std`；正式开展本实验前，需在推理模块补充统一的推理期高斯噪声注入参数（按训练集统计量标定噪声尺度）。
+
+### 3.5 实验五：基于 DeepSets 可变输入特性的贪心算法最佳传感器布局探索
+
+- **研究目的**：利用 `DeepSets` 对任意传感器数量与排列的置换不变推理能力，无需为每组候选布局重新训练网络，直接通过贪心搜索发掘鱼体表面最具信息量的关键传感器分布。
+- **实验设计**：
+  - **搜索策略**：基于在候选池（`cand60` 或 504 壁面点）上训练好的单一 `DeepSets` 模型，在验证集 `val_re` 上执行序列贪心选位（前向逐步添加 $0 \to K$ 或后向逐步剪枝 $N_{\text{cand}} \to K$），以验证集状态预测误差（或经 `pPINN` 串联后的流场重构误差）为选位目标函数，严格避免接触锁定测试集 `test_re`。
+  - **对照验证**：在相同预算 $K$ 下，将搜索得到的 `DeepSets-Greedy` 布局与弧长均匀布局（`uniform`）、水动力关键区先验布局（`physics_layout`）对比，并把该最优布局迁移给固定布局 `MLP` 与 `SurfacePOD` 进行重训与测试集（`14250 / 16250`）评估，验证“关键测点物理规律可迁移性”及在鱼体头部/肩部/尾柄的测点聚集特征。
