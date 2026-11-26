@@ -184,13 +184,18 @@ def build_lr_scheduler(
         )
     if mode == "exponential":
         return ExponentialLR(optimizer, gamma=float(cfg.get("gamma", 0.99)))
-    return ReduceLROnPlateau(
-        optimizer,
-        mode="min",
-        factor=float(cfg.get("factor", 0.5)),
-        patience=int(cfg.get("patience", 10)),
-        threshold=float(cfg.get("threshold", 1e-4)),
-        min_lr=float(cfg.get("min_lr", 1e-6)),
+    if mode == "plateau":
+        return ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=float(cfg.get("factor", 0.5)),
+            patience=int(cfg.get("patience", 10)),
+            threshold=float(cfg.get("threshold", 1e-4)),
+            min_lr=float(cfg.get("min_lr", 1e-6)),
+        )
+    raise ValueError(
+        f"不支持的 lr_scheduler.strategy: {strategy!r}，"
+        "可选: ['constant', 'step', 'multistep', 'cosine', 'exponential', 'plateau']"
     )
 
 
@@ -202,11 +207,14 @@ def step_lr_scheduler(
     """在每个 epoch 结束后更新学习率调度器。"""
     if scheduler is None:
         return
-    if strategy.strip().lower() == "plateau":
+    mode = strategy.strip().lower()
+    if mode == "plateau":
         if val_metric is not None:
             scheduler.step(val_metric)
-    else:
+    elif mode in ("step", "multistep", "cosine", "exponential"):
         scheduler.step()
+    else:
+        raise ValueError(f"不支持的 lr_scheduler.strategy: {strategy!r}")
 
 
 def compute_pde_weight(
@@ -242,18 +250,31 @@ def compute_pde_weight(
 
     if mode == "step":
         gamma = float(cfg.get("gamma", 2.0))
+        init_w = float(cfg.get("start_weight", base_weight))
+        if init_w <= 0.0 and float(base_weight) > 0.0:
+            raise ValueError("pde_weight_schedule.strategy='step' 时 start_weight 必须大于 0")
         if "milestones" in cfg:
             steps = sum(1 for m in cfg["milestones"] if epoch >= int(m))
         else:
             step_size = int(cfg.get("step_size", 50))
+            if step_size <= 0:
+                raise ValueError(f"step_size 必须为正整数，实际为 {step_size}")
             steps = (epoch - 1) // step_size
-        w = float(cfg.get("start_weight", base_weight)) * (gamma ** steps)
+        w = init_w * (gamma ** steps)
         return float(min(w, float(cfg["max_weight"]))) if "max_weight" in cfg else float(w)
 
-    # exponential：按每轮指数倍率递增或衰减
-    gamma = float(cfg.get("gamma", 1.02))
-    w = float(cfg.get("start_weight", base_weight)) * (gamma ** (epoch - 1))
-    return float(min(w, float(cfg["max_weight"]))) if "max_weight" in cfg else float(w)
+    if mode == "exponential":
+        gamma = float(cfg.get("gamma", 1.02))
+        init_w = float(cfg.get("start_weight", base_weight))
+        if init_w <= 0.0 and float(base_weight) > 0.0:
+            raise ValueError("pde_weight_schedule.strategy='exponential' 时 start_weight 必须大于 0")
+        w = init_w * (gamma ** (epoch - 1))
+        return float(min(w, float(cfg["max_weight"]))) if "max_weight" in cfg else float(w)
+
+    raise ValueError(
+        f"不支持的 pde_weight_schedule.strategy: {strategy!r}，"
+        "可选: ['constant', 'linear', 'cosine', 'step', 'exponential']"
+    )
 
 
 def save_checkpoint(path: str | Path, payload: Mapping[str, Any]) -> Path:

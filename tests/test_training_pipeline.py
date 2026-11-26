@@ -8,12 +8,21 @@ import sys
 import numpy as np
 import pytest
 import torch
+import torch.nn.functional as F
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT / "src") not in sys.path:
     sys.path.insert(0, str(ROOT / "src"))
 
+from fish_flow.collocation import sample_collocation_points
 from fish_flow.config import run_from_config
+from fish_flow.data.encoder_loader import (
+    DeepSetsSubsetCollator,
+    Normalizer,
+    load_encoder_training_data,
+)
+from fish_flow.losses import PPINNLoss
+from fish_flow.models import DynamicSetSensorEncoder, PPINNModel
 from fish_flow.training.common import (
     EarlyStopper,
     PressureGaugeAccum,
@@ -21,6 +30,8 @@ from fish_flow.training.common import (
     compute_pde_weight,
     step_lr_scheduler,
 )
+from fish_flow.training.deepsets import DeepSetsTrainer, build_dynamic_validation_panel
+from fish_flow.training.ppinn import PPINNTrainingConfig, PPINNTrainer
 
 
 def test_schedules_and_early_stopping() -> None:
@@ -160,3 +171,144 @@ def test_single_run_config_mlp_deepsets_ppinn(tmp_path: Path) -> None:
     assert (pp_dir / "best_ppinn.pt").exists()
     assert (pp_dir / "last_ppinn.pt").exists()
     assert (pp_dir / "history.json").exists()
+
+
+def test_ppinn_loss_type_and_averaging() -> None:
+    pred = torch.tensor([[1.0, 2.0, 3.0], [2.0, 4.0, 6.0]])
+    true = torch.zeros_like(pred)
+    r_u = torch.tensor([[2.0], [-4.0]])
+    r_v = torch.tensor([[1.0], [-1.0]])
+    r_c = torch.tensor([[0.5], [-0.5]])
+
+    loss_fn = PPINNLoss(lambda_data=1.0, lambda_phys=1.0, loss_type="l1")
+    total, metrics = loss_fn(pred, true, residuals=(r_u, r_v, r_c))
+    exp_u = float(F.l1_loss(pred[:, 0], true[:, 0]))
+    exp_v = float(F.l1_loss(pred[:, 1], true[:, 1]))
+    exp_p = float(F.l1_loss(pred[:, 2], true[:, 2]))
+    exp_data = (exp_u + exp_v + exp_p) / 3.0
+    exp_ru = float(F.l1_loss(r_u, torch.zeros_like(r_u)))
+    exp_rv = float(F.l1_loss(r_v, torch.zeros_like(r_v)))
+    exp_rc = float(F.l1_loss(r_c, torch.zeros_like(r_c)))
+    exp_phys = (exp_ru + exp_rv + exp_rc) / 3.0
+
+    assert metrics["loss_mom_x"] == pytest.approx(exp_ru)
+    assert metrics["loss_data"] == pytest.approx(exp_data)
+    assert metrics["loss_phys"] == pytest.approx(exp_phys)
+    assert float(total) == pytest.approx(exp_data + exp_phys)
+
+
+def test_strict_validation_and_split_disjointness(tmp_path: Path) -> None:
+    param = torch.nn.Parameter(torch.tensor([1.0]))
+    opt = torch.optim.SGD([param], lr=1e-2)
+
+    with pytest.raises(ValueError):
+        build_lr_scheduler(opt, "unknown_sched", 10)
+    with pytest.raises(ValueError):
+        compute_pde_weight(1, 10, 1.0, "cos")
+    with pytest.raises(ValueError):
+        compute_pde_weight(1, 10, 1.0, "step", {"start_weight": 0.0, "gamma": 2.0})
+    with pytest.raises(ValueError):
+        compute_pde_weight(1, 10, 1.0, "exponential", {"start_weight": 0.0, "gamma": 1.5})
+    with pytest.raises(ValueError):
+        PPINNLoss(loss_type="huber")
+    with pytest.raises(ValueError):
+        DynamicSetSensorEncoder(pool="avg")
+    with pytest.raises(ValueError):
+        PPINNModel(activation="swish")
+    with pytest.raises(ValueError):
+        Normalizer(method="robust")
+    with pytest.raises(ValueError):
+        DeepSetsSubsetCollator(pool_size=60, sensor_counts=(12, 96))
+    with pytest.raises(ValueError):
+        build_dynamic_validation_panel(candidate_count=60, budgets=(12, 96))
+    with pytest.raises(ValueError):
+        build_dynamic_validation_panel(candidate_count=10, budgets=(10,), layouts_per_budget=2)
+
+    re_norm = Normalizer("standard").fit(np.array([13500.0, 17500.0]))
+    st_norm = Normalizer("standard").fit(np.array([2.4, 2.7]))
+    with pytest.raises(ValueError):
+        sample_collocation_points(32, (-0.5, 4.5, -0.8, 0.8), re_norm, st_norm, re_range=(13500, 17500), st_range=(2.4, 2.7), method="lhs")
+    with pytest.raises(ValueError):
+        sample_collocation_points(32, (-0.5, 4.5, -0.8, 0.8), re_norm, st_norm, re_range=(13500, 17500), st_range=(2.4, 2.7), re_st_mode="bad")
+
+    # 划分重叠与未知 task 应立即拒绝
+    bad_cfg = json.loads((ROOT / "runs" / "example" / "mlp" / "config.json").read_text(encoding="utf-8"))
+    bad_cfg["processed_dir"] = str(ROOT / "data" / "processed")
+    bad_cfg["train_re"] = bad_cfg["train_re"] + [bad_cfg["test_re"][0]]
+    bad_dir = tmp_path / "bad_split"
+    bad_dir.mkdir()
+    (bad_dir / "config.json").write_text(json.dumps(bad_cfg), encoding="utf-8")
+    with pytest.raises(ValueError, match="test_re"):
+        run_from_config(bad_dir)
+
+    bad_task_cfg = json.loads((ROOT / "runs" / "example" / "mlp" / "config.json").read_text(encoding="utf-8"))
+    bad_task_cfg["task"] = "transformer"
+    bad_task_dir = tmp_path / "bad_task"
+    bad_task_dir.mkdir()
+    (bad_task_dir / "config.json").write_text(json.dumps(bad_task_cfg), encoding="utf-8")
+    with pytest.raises(ValueError, match="task"):
+        run_from_config(bad_task_dir)
+
+
+def test_lhs_stratification_batch_resample_and_deepsets_std_val() -> None:
+    # 1. LHS 拒绝采样应保持 (Re, St, phi) 维度的严格 1D 分层
+    re_norm = Normalizer("standard").fit(np.array([13500.0, 17500.0]))
+    st_norm = Normalizer("standard").fit(np.array([2.4, 2.7]))
+    n_pts = 128
+    col, _ = sample_collocation_points(
+        n_pts,
+        (-0.5, 4.5, -0.8, 0.8),
+        re_norm,
+        st_norm,
+        re_range=(13500.0, 17500.0),
+        st_range=(2.4, 2.7),
+        method="latin_hypercube",
+        exclude_solid=True,
+        seed=7,
+    )
+    phi_bins = np.floor(col["phi"][:, 0] / (2.0 * np.pi) * n_pts).astype(np.int64)
+    assert len(np.unique(phi_bins)) == n_pts
+
+    # 2. resample_collocation_mode="Batch" 大小写应正常工作
+    from fish_flow.data.ppinn_loader import load_ppinn_training_data
+
+    pp_data = load_ppinn_training_data(
+        processed_dir=ROOT / "data" / "processed",
+        train_re=[13500, 14000],
+        val_re=[14750],
+        param_norm_method="standard",
+        seed=42,
+    )
+    pp_model = PPINNModel(in_dim=6, hidden_dims=(16, 16), out_dim=3, activation="tanh")
+    _, pp_hist = PPINNTrainer(
+        PPINNTrainingConfig(
+            batch_size=64,
+            steps_per_epoch=2,
+            num_epochs=1,
+            n_collocation=32,
+            resample_collocation_mode="Batch",
+            verbose=False,
+        )
+    ).fit(pp_model, pp_data)
+    assert len(pp_hist.epochs) == 1
+
+    # 3. DeepSets 标准验证（use_frozen_panel=False）在 random_subset=True 下应走子集采样且可复现
+    ds_data = load_encoder_training_data(
+        processed_dir=ROOT / "data" / "processed",
+        train_re=[13500, 14000],
+        val_re=[14750],
+        encoder_type="deepsets",
+        batch_size=32,
+        random_subset=True,
+        training_sensor_counts=(12, 24),
+        seed=42,
+    )
+    assert isinstance(ds_data.val_loader.collate_fn, DeepSetsSubsetCollator)
+    ds_model = DynamicSetSensorEncoder(embed_dim=16, phi_hidden=(16,), rho_hidden=(16,), candidate_count=len(ds_data.sensor_indices))
+    trainer = DeepSetsTrainer()
+    from fish_flow.losses import DeepSetsLoss
+
+    crit = DeepSetsLoss()
+    m1 = trainer.evaluate_standard(ds_model, ds_data.val_loader, crit, ds_data.re_normalizer, ds_data.st_normalizer, torch.device("cpu"))
+    m2 = trainer.evaluate_standard(ds_model, ds_data.val_loader, crit, ds_data.re_normalizer, ds_data.st_normalizer, torch.device("cpu"))
+    assert m1["loss_total"] == pytest.approx(m2["loss_total"])

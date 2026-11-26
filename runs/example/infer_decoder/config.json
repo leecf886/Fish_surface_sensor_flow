@@ -1,11 +1,20 @@
 {
+  "// mode": "推理模式：encoder（仅编码器）| decoder（仅解码器）| cascade（串联推理）",
   "mode": "decoder",
+  "// ppinn_ckpt": "已训练 pPINN 解码器最优权重路径（best_ppinn.pt）",
   "ppinn_ckpt": "runs/example/ppinn/best_ppinn.pt",
+  "// processed_dir": "预处理数据目录路径（从中读取 mesh.h5 的 ROI 物理坐标与 ReXXX.h5 参数）",
   "processed_dir": "data/processed",
+  "// re_list": "需要解码的雷诺数工况列表（若不从工况读取，可改用 params 字段直接传自定义物理参数）",
   "re_list": [14750, 16750],
+  "// output_dir": "推理结果输出目录（将原 config.json 复制到此目录并保存 .npz）",
   "output_dir": "runs/infer_decoder",
+  "// output_name": "输出的 .npz 文件名（包含物理流场 uvp_pred [N, M, 3] 与坐标 xy 等）",
   "output_name": "decoder_pred.npz",
+  "// periodic_only": "从 ReXXX.h5 读取参数时是否仅保留周期有效帧",
   "periodic_only": true,
+  "// chunk_size": "单帧全 ROI 空间网格前向传播时的分块点数（防止显存溢出）",
   "chunk_size": 16384,
+  "// device": "计算设备：auto（自动优先 CUDA）| cpu | cuda",
   "device": "auto"
 }

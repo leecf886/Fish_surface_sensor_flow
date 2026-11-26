@@ -19,6 +19,8 @@ _ACTIVATIONS: Dict[str, Type[nn.Module]] = {
     "identity": nn.Identity,
 }
 
+_VALID_POOLS = ("mean+max", "mean", "sum", "max")
+
 
 def _make_mlp(
     in_dim: int,
@@ -27,7 +29,10 @@ def _make_mlp(
     activation: str,
 ) -> nn.Sequential:
     """构建 Linear -> Act -> ... -> Linear 全连接网络。"""
-    act_cls = _ACTIVATIONS[activation.strip().lower()]
+    act_key = activation.strip().lower()
+    if act_key not in _ACTIVATIONS:
+        raise ValueError(f"不支持的 activation: {activation!r}，可选: {sorted(_ACTIVATIONS)}")
+    act_cls = _ACTIVATIONS[act_key]
     layers: list[nn.Module] = []
     d = in_dim
     for h in hidden_dims:
@@ -72,6 +77,8 @@ class DynamicSetSensorEncoder(nn.Module):
     ) -> None:
         super().__init__()
         self.pool = pool.strip().lower()
+        if self.pool not in _VALID_POOLS:
+            raise ValueError(f"不支持的 pool: {pool!r}，可选: {list(_VALID_POOLS)}")
         self.use_count_feature = use_count_feature
         self.candidate_count = candidate_count
 

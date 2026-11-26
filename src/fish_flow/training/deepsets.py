@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 from dataclasses import asdict, dataclass, field
 import hashlib
+import math
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -54,12 +55,23 @@ def build_dynamic_validation_panel(
     """在指定候选传感器总池上生成固定多预算验证面板。"""
     n_cand = int(candidate_count)
     budget_list = [int(b) for b in budgets]
+    n_layouts = int(layouts_per_budget)
+    if n_cand <= 0 or not budget_list or n_layouts <= 0:
+        raise ValueError("candidate_count、budgets 与 layouts_per_budget 必须大于 0")
+    for nsensor in budget_list:
+        if nsensor <= 0 or nsensor > n_cand:
+            raise ValueError(f"panel_budgets 中的预算 {nsensor} 超出候选总池范围 [1, {n_cand}]")
+        if n_layouts > math.comb(n_cand, nsensor):
+            raise ValueError(
+                f"budget={nsensor} 在 pool={n_cand} 下最多仅能产生 {math.comb(n_cand, nsensor)} 种布局，"
+                f"小于要求的 layouts_per_budget={n_layouts}"
+            )
     rng = np.random.default_rng(int(seed))
 
     layouts: List[Dict[str, Any]] = []
     for nsensor in budget_list:
         seen: set[Tuple[int, ...]] = set()
-        while len(seen) < int(layouts_per_budget):
+        while len(seen) < n_layouts:
             idx = tuple(int(x) for x in np.sort(rng.choice(n_cand, size=nsensor, replace=False)).tolist())
             if idx in seen:
                 continue
@@ -311,8 +323,11 @@ class DeepSetsTrainer:
         st_normalizer: Normalizer,
         device: torch.device,
     ) -> Dict[str, float]:
-        """在标准全池 val_loader 上评估物理回归与圆周相位指标。"""
+        """在 val_loader 上评估物理回归与圆周相位指标（支持全池与确定性子集整理器）。"""
         model.eval()
+        collator = getattr(loader, "collate_fn", None)
+        if isinstance(collator, DeepSetsSubsetCollator):
+            collator.reset()
         sum_total = 0.0
         n_seen = 0
         re_t_all, re_p_all, st_t_all, st_p_all, ph_t_all, ph_p_all = [], [], [], [], [], []

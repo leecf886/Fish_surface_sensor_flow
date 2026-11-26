@@ -389,6 +389,8 @@ def run_postprocess(
 ) -> Dict[str, Any]:
     """统一后处理入口：按推理模式加载预测与真值，按需计算编码器/流场指标并绘制对比云图。"""
     mode_s = mode.strip().lower()
+    if mode_s not in _DEFAULT_PRED_NAMES:
+        raise ValueError(f"不支持的后处理 mode: {mode!r}，可选: {sorted(_DEFAULT_PRED_NAMES)}")
     pred_npz = _resolve_pred_npz(pred_path, mode_s)
     out_dir = Path(output_dir) if output_dir is not None else pred_npz.parent
     out_dir.mkdir(parents=True, exist_ok=True)

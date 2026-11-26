@@ -72,20 +72,38 @@ def _resolve_infer_sensor_indices(
     processed_dir: str | Path,
     ckpt_indices: np.ndarray,
     cfg: Mapping[str, Any],
+    *,
+    model_type: str = "",
 ) -> np.ndarray:
-    """解析推理阶段使用的传感器下标（默认沿用 ckpt 内保存的下标）。"""
-    if cfg.get("sensor_indices") is not None:
-        return np.asarray(cfg["sensor_indices"], dtype=np.int64)
+    """解析推理阶段使用的传感器下标；SensorMLP 禁止偏离训练布局。"""
+    has_idx = cfg.get("sensor_indices") is not None
     mode = cfg.get("sensor_mode")
-    if mode is None:
-        return ckpt_indices
-    mode_s = str(mode).strip().lower()
-    mesh = load_base_surface_mesh(processed_dir)
-    if mode_s == "all":
-        return np.arange(len(mesh.wall_cell_ids), dtype=np.int64)
-    if mode_s == "cand60":
-        return mesh.cand60_wall_indices
-    return select_uniform_arc_indices(mesh.wall_arc, int(cfg.get("n_sensors", 24)))
+    has_n = cfg.get("n_sensors") is not None
+
+    if has_idx:
+        resolved = np.asarray(cfg["sensor_indices"], dtype=np.int64)
+    elif mode is not None:
+        mode_s = str(mode).strip().lower()
+        mesh = load_base_surface_mesh(processed_dir)
+        if mode_s == "all":
+            resolved = np.arange(len(mesh.wall_cell_ids), dtype=np.int64)
+        elif mode_s == "cand60":
+            resolved = mesh.cand60_wall_indices
+        elif mode_s == "uniform_arc":
+            n_sensors = int(cfg.get("n_sensors", 24))
+            if not (1 <= n_sensors <= len(mesh.wall_cell_ids)):
+                raise ValueError(f"n_sensors={n_sensors} 超出壁面传感器范围 [1, {len(mesh.wall_cell_ids)}]")
+            resolved = select_uniform_arc_indices(mesh.wall_arc, n_sensors)
+        else:
+            raise ValueError(f"不支持的 sensor_mode: {mode!r}，可选: ['all', 'cand60', 'uniform_arc']")
+    elif has_n:
+        raise ValueError("配置了 n_sensors 时必须同时显式指定 sensor_mode='uniform_arc'")
+    else:
+        resolved = ckpt_indices
+
+    if model_type == "SensorMLP" and not np.array_equal(resolved, ckpt_indices):
+        raise ValueError("SensorMLP 不支持在推理时覆盖与训练 checkpoint 不一致的传感器布局")
+    return resolved
 
 
 def run_inference_from_config(
@@ -95,6 +113,8 @@ def run_inference_from_config(
     """根据单一推理 config.json 执行编码器 / 解码器 / 串联推理，复制原配置并输出 .npz。"""
     cfg, cfg_path, out_dir = load_infer_config(config_or_dir, overrides)
     mode = str(cfg["mode"]).strip().lower()
+    if mode not in ("encoder", "decoder", "cascade"):
+        raise ValueError(f"不支持的推理 mode: {cfg['mode']!r}，可选: ['encoder', 'decoder', 'cascade']")
     processed_dir = cfg.get("processed_dir", "data/processed")
     re_list = [int(r) for r in cfg["re_list"]] if cfg.get("re_list") is not None else None
     periodic_only = bool(cfg.get("periodic_only", True))
@@ -105,7 +125,12 @@ def run_inference_from_config(
 
     if mode == "encoder":
         enc_bundle = load_encoder_checkpoint(cfg["encoder_ckpt"], device=device)
-        sensor_idx = _resolve_infer_sensor_indices(processed_dir, enc_bundle.sensor_indices, cfg)
+        sensor_idx = _resolve_infer_sensor_indices(
+            processed_dir,
+            enc_bundle.sensor_indices,
+            cfg,
+            model_type=enc_bundle.model_type,
+        )
         inputs = load_encoder_inference_inputs(
             processed_dir=processed_dir,
             re_list=re_list,
@@ -116,6 +141,7 @@ def run_inference_from_config(
             enc_bundle,
             inputs.sensor_uvp,
             sensor_xy=inputs.sensor_xy,
+            sensor_indices=inputs.sensor_indices,
             L=inputs.L,
             batch_size=int(cfg.get("batch_size", 1024)),
             device=device,
@@ -181,7 +207,12 @@ def run_inference_from_config(
     # 串联推理：同时输出编码器预测状态与解码器重构物理流场
     enc_bundle = load_encoder_checkpoint(cfg["encoder_ckpt"], device=device)
     ppinn_bundle = load_ppinn_checkpoint(cfg["ppinn_ckpt"], device=device)
-    sensor_idx = _resolve_infer_sensor_indices(processed_dir, enc_bundle.sensor_indices, cfg)
+    sensor_idx = _resolve_infer_sensor_indices(
+        processed_dir,
+        enc_bundle.sensor_indices,
+        cfg,
+        model_type=enc_bundle.model_type,
+    )
     enc_inputs = load_encoder_inference_inputs(
         processed_dir=processed_dir,
         re_list=re_list,
@@ -195,6 +226,7 @@ def run_inference_from_config(
         enc_inputs.sensor_uvp,
         mesh.roi_xy,
         sensor_xy=enc_inputs.sensor_xy,
+        sensor_indices=enc_inputs.sensor_indices,
         u_inf=enc_inputs.u_inf,
         encoder_batch_size=int(cfg.get("batch_size", 1024)),
         decoder_chunk_size=int(cfg.get("chunk_size", 16384)),

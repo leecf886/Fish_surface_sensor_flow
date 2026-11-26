@@ -55,7 +55,12 @@ def _resolve_mlp_sensors(processed_dir: str | Path, data_cfg: Mapping[str, Any])
     mesh = load_base_surface_mesh(processed_dir)
     if mode == "cand60":
         return mesh.cand60_wall_indices
-    return select_uniform_arc_indices(mesh.wall_arc, int(data_cfg.get("n_sensors", 24)))
+    if mode == "uniform_arc":
+        n_sensors = int(data_cfg.get("n_sensors", 24))
+        if not (1 <= n_sensors <= len(mesh.wall_cell_ids)):
+            raise ValueError(f"n_sensors={n_sensors} 超出壁面传感器范围 [1, {len(mesh.wall_cell_ids)}]")
+        return select_uniform_arc_indices(mesh.wall_arc, n_sensors)
+    raise ValueError(f"不支持的 MLP sensor_mode: {mode!r}，可选: ['uniform_arc', 'cand60', 'all']")
 
 
 def _resolve_deepsets_pool(processed_dir: str | Path, data_cfg: Mapping[str, Any]) -> Optional[np.ndarray]:
@@ -63,9 +68,31 @@ def _resolve_deepsets_pool(processed_dir: str | Path, data_cfg: Mapping[str, Any
     if data_cfg.get("sensor_indices") is not None:
         return np.asarray(data_cfg["sensor_indices"], dtype=np.int64)
     pool = str(data_cfg.get("sensor_pool", "all")).strip().lower()
+    if pool == "all":
+        return None
     if pool == "cand60":
         return load_base_surface_mesh(processed_dir).cand60_wall_indices
-    return None
+    raise ValueError(f"不支持的 DeepSets sensor_pool: {pool!r}，可选: ['all', 'cand60']")
+
+
+def _validate_re_splits(cfg: Mapping[str, Any]) -> Tuple[list[int], Optional[list[int]]]:
+    """校验 train_re / val_re / test_re 划分非空且严格两两互斥，防止数据泄漏。"""
+    train_re = [int(r) for r in cfg["train_re"]]
+    if not train_re:
+        raise ValueError("train_re 不能为空")
+    val_re = [int(r) for r in cfg["val_re"]] if cfg.get("val_re") is not None else None
+    test_re = [int(r) for r in cfg["test_re"]] if cfg.get("test_re") is not None else None
+
+    train_set = set(train_re)
+    val_set = set(val_re or [])
+    test_set = set(test_re or [])
+    if train_set & val_set:
+        raise ValueError(f"train_re 与 val_re 存在重叠工况: {sorted(train_set & val_set)}")
+    if train_set & test_set:
+        raise ValueError(f"train_re 与 test_re 存在重叠工况（禁止数据泄漏）: {sorted(train_set & test_set)}")
+    if val_set & test_set:
+        raise ValueError(f"val_re 与 test_re 存在重叠工况（禁止数据泄漏）: {sorted(val_set & test_set)}")
+    return train_re, val_re
 
 
 def run_mlp_from_config(
@@ -75,8 +102,7 @@ def run_mlp_from_config(
     """读取单个 config.json 并执行 MLP 训练。"""
     cfg, out_dir = load_run_config(config_or_run_dir, overrides)
     processed_dir = cfg.get("processed_dir", "data/processed")
-    train_re = [int(r) for r in cfg["train_re"]]
-    val_re = [int(r) for r in cfg["val_re"]] if cfg.get("val_re") is not None else None
+    train_re, val_re = _validate_re_splits(cfg)
     data_cfg = cfg.get("data", {})
     model_cfg = cfg.get("model", {})
     tr_cfg = cfg.get("training", {})
@@ -144,8 +170,7 @@ def run_deepsets_from_config(
     """读取单个 config.json 并执行 DeepSets 训练。"""
     cfg, out_dir = load_run_config(config_or_run_dir, overrides)
     processed_dir = cfg.get("processed_dir", "data/processed")
-    train_re = [int(r) for r in cfg["train_re"]]
-    val_re = [int(r) for r in cfg["val_re"]] if cfg.get("val_re") is not None else None
+    train_re, val_re = _validate_re_splits(cfg)
     data_cfg = cfg.get("data", {})
     model_cfg = cfg.get("model", {})
     tr_cfg = cfg.get("training", {})
@@ -228,8 +253,7 @@ def run_ppinn_from_config(
     """读取单个 config.json 并执行 pPINN 训练。"""
     cfg, out_dir = load_run_config(config_or_run_dir, overrides)
     processed_dir = cfg.get("processed_dir", "data/processed")
-    train_re = [int(r) for r in cfg["train_re"]]
-    val_re = [int(r) for r in cfg["val_re"]] if cfg.get("val_re") is not None else None
+    train_re, val_re = _validate_re_splits(cfg)
     data_cfg = cfg.get("data", {})
     model_cfg = cfg.get("model", {})
     tr_cfg = cfg.get("training", {})
@@ -309,4 +333,6 @@ def run_from_config(
         return run_mlp_from_config(config_or_run_dir, overrides=overrides)
     if task == "deepsets":
         return run_deepsets_from_config(config_or_run_dir, overrides=overrides)
-    return run_ppinn_from_config(config_or_run_dir, overrides=overrides)
+    if task == "ppinn":
+        return run_ppinn_from_config(config_or_run_dir, overrides=overrides)
+    raise ValueError(f"不支持的训练 task: {cfg['task']!r}，可选: ['mlp', 'deepsets', 'ppinn']")

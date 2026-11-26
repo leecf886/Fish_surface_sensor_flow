@@ -275,6 +275,11 @@ def load_ppinn_training_data(
     proc_dir = Path(processed_dir)
     train_re_list = [int(r) for r in train_re]
     val_re_list = [] if val_re is None else [int(r) for r in val_re]
+    if not train_re_list:
+        raise ValueError("train_re 不能为空")
+    overlap = set(train_re_list) & set(val_re_list)
+    if overlap:
+        raise ValueError(f"train_re 与 val_re 存在重叠工况: {sorted(overlap)}")
 
     mesh = load_ppinn_mesh(proc_dir)
     re_files = _discover_re_files(proc_dir)

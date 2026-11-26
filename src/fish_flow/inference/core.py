@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Optional, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -142,6 +142,7 @@ def infer_encoder(
     sensor_uvp: np.ndarray,
     sensor_xy: Optional[np.ndarray] = None,
     *,
+    sensor_indices: Optional[Sequence[int] | np.ndarray] = None,
     L: float = 0.2,
     batch_size: int = 1024,
     device: str | torch.device = "auto",
@@ -151,23 +152,51 @@ def infer_encoder(
     model = bundle.model.to(dev).eval()
 
     uvp_np = np.asarray(sensor_uvp, dtype=np.float64)
+    if uvp_np.ndim != 3 or uvp_np.shape[2] != 3:
+        raise ValueError(f"sensor_uvp 形状必须为 [N, K, 3]，实际为 {uvp_np.shape}")
     n_samples = int(uvp_np.shape[0])
+    n_sensors = int(uvp_np.shape[1])
     preds = []
 
     if bundle.model_type == "SensorMLP":
         assert bundle.x_normalizer is not None
+        if n_sensors != len(bundle.sensor_indices):
+            raise ValueError(
+                f"SensorMLP 推理传感器数量 ({n_sensors}) 与训练 checkpoint ({len(bundle.sensor_indices)}) 不一致"
+            )
+        if sensor_indices is not None:
+            idx_arr = np.asarray(sensor_indices, dtype=np.int64)
+            if not np.array_equal(idx_arr, bundle.sensor_indices):
+                raise ValueError("SensorMLP 推理传感器下标顺序或位置与训练 checkpoint 不一致")
+        if sensor_xy is not None:
+            xy_nd_in = np.asarray(sensor_xy, dtype=np.float32) / float(L)
+            if xy_nd_in.shape != bundle.xy_nd.shape or not np.allclose(
+                xy_nd_in, bundle.xy_nd, rtol=1e-4, atol=1e-5
+            ):
+                raise ValueError("SensorMLP 推理传感器坐标与训练 checkpoint 不一致")
         x_norm = bundle.x_normalizer.transform(uvp_np.reshape(n_samples, -1)).astype(np.float32)
         for st in range(0, n_samples, batch_size):
             xb = torch.as_tensor(x_norm[st : st + batch_size], dtype=torch.float32, device=dev)
             preds.append(model(xb).cpu())
     else:
         # DeepSets：按训练集通道统计量标准化，并无量纲化传感器坐标
+        if sensor_indices is not None:
+            idx_arr = np.asarray(sensor_indices, dtype=np.int64)
+            if idx_arr.shape != (n_sensors,):
+                raise ValueError(f"sensor_indices 长度 ({len(idx_arr)}) 与 sensor_uvp ({n_sensors}) 不一致")
+            if not np.all(np.isin(idx_arr, bundle.sensor_indices)):
+                raise ValueError("DeepSets 推理 sensor_indices 必须落在训练候选传感器总池内")
+        if sensor_xy is not None:
+            xy_arr = np.asarray(sensor_xy, dtype=np.float32)
+            if xy_arr.shape != (n_sensors, 2):
+                raise ValueError(f"sensor_xy 形状必须为 ({n_sensors}, 2)，实际为 {xy_arr.shape}")
+            xy_nd_np = xy_arr / float(L)
+        else:
+            if n_sensors != len(bundle.xy_nd):
+                raise ValueError(f"未传 sensor_xy 时 sensor_uvp 测点数 ({n_sensors}) 须等于 ckpt ({len(bundle.xy_nd)})")
+            xy_nd_np = bundle.xy_nd.astype(np.float32, copy=False)
+
         uvp_norm = ((uvp_np - bundle.chan_mean) / bundle.chan_std).astype(np.float32)
-        xy_nd_np = (
-            np.asarray(sensor_xy, dtype=np.float32) / float(L)
-            if sensor_xy is not None
-            else bundle.xy_nd.astype(np.float32, copy=False)
-        )
         pos_base = torch.as_tensor(xy_nd_np, dtype=torch.float32, device=dev)
         for st in range(0, n_samples, batch_size):
             ed = min(st + batch_size, n_samples)
@@ -260,6 +289,7 @@ def infer_cascade(
     xy_phys: np.ndarray,
     *,
     sensor_xy: Optional[np.ndarray] = None,
+    sensor_indices: Optional[Sequence[int] | np.ndarray] = None,
     u_inf: Union[float, np.ndarray] = 1.0,
     encoder_batch_size: int = 1024,
     decoder_chunk_size: int = 16384,
@@ -270,6 +300,7 @@ def infer_cascade(
         encoder_bundle,
         sensor_uvp,
         sensor_xy=sensor_xy,
+        sensor_indices=sensor_indices,
         L=ppinn_bundle.L,
         batch_size=encoder_batch_size,
         device=device,

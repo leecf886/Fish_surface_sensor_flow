@@ -318,3 +318,63 @@ def test_end_to_end_infer_configs_and_cli(tmp_path: Path) -> None:
         assert z["uvp_pred"].shape == (80, 32084, 3)
         assert z["sensor_indices"].shape == (24,)
         assert np.all(np.isfinite(z["uvp_pred"]))
+
+
+def test_example_cascade_config_and_mlp_layout_guards(tmp_path: Path) -> None:
+    """校验 infer_cascade 示例配置与 DeepSets 训练分布一致，且 SensorMLP 拒绝错位传感器布局。"""
+    ds_ex = json.loads((ROOT / "runs" / "example" / "deepsets" / "config.json").read_text(encoding="utf-8"))
+    cas_ex = json.loads((ROOT / "runs" / "example" / "infer_cascade" / "config.json").read_text(encoding="utf-8"))
+    assert cas_ex.get("sensor_mode") == "uniform_arc"
+    assert cas_ex.get("n_sensors") in ds_ex["data"]["training_sensor_counts"]
+
+    # 构造 SensorMLP ckpt，检验索引/坐标/数量不一致及配置文件覆盖报错
+    enc_re_norm = Normalizer("standard").fit(np.array([13500.0, 17500.0]))
+    enc_st_norm = Normalizer("standard").fit(np.array([2.40, 2.70]))
+    x_norm = Normalizer("standard").fit(np.array([[1.0] * 6, [2.0] * 6]))
+    mlp = SensorMLP(input_dim=6, hidden_dims=(8,), output_dim=4, activation="tanh")
+    enc_ckpt = tmp_path / "best_mlp.pt"
+    save_checkpoint(
+        enc_ckpt,
+        {
+            "model_type": "SensorMLP",
+            "model_state_dict": mlp.state_dict(),
+            "model_hparams": {"input_dim": 6, "hidden_dims": (8,), "output_dim": 4, "activation": "tanh"},
+            "normalizers": {
+                "encoder_type": "mlp",
+                "sensor_indices": [0, 1],
+                "xy_nd": [[0.1, 0.0], [0.5, 0.0]],
+                "re_normalizer": enc_re_norm.to_dict(),
+                "st_normalizer": enc_st_norm.to_dict(),
+                "x_normalizer": x_norm.to_dict(),
+            },
+        },
+    )
+    bundle = load_encoder_checkpoint(enc_ckpt, device="cpu")
+    uvp = np.ones((2, 2, 3), dtype=np.float64)
+
+    with pytest.raises(ValueError, match="下标"):
+        infer_encoder(bundle, uvp, sensor_indices=[1, 0], device="cpu")
+    with pytest.raises(ValueError, match="坐标"):
+        infer_encoder(bundle, uvp, sensor_xy=np.array([[0.1, 0.0], [0.2, 0.0]]) * 0.2, device="cpu")
+    with pytest.raises(ValueError, match="数量"):
+        infer_encoder(bundle, np.ones((2, 3, 3), dtype=np.float64), device="cpu")
+
+    # 配置文件中为 SensorMLP 指定不一致的传感器布局应被 runner 拦截
+    bad_cfg = tmp_path / "bad_mlp_infer.json"
+    bad_cfg.write_text(
+        json.dumps(
+            {
+                "mode": "encoder",
+                "encoder_ckpt": str(enc_ckpt),
+                "processed_dir": str(ROOT / "data" / "processed"),
+                "re_list": [14750],
+                "sensor_mode": "uniform_arc",
+                "n_sensors": 24,
+                "output_dir": str(tmp_path / "out_bad"),
+                "device": "cpu",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="SensorMLP"):
+        run_inference_from_config(bad_cfg)

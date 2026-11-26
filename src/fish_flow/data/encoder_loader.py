@@ -35,6 +35,11 @@ class Normalizer:
     min_val: Optional[np.ndarray] = None
     max_val: Optional[np.ndarray] = None
 
+    def __post_init__(self) -> None:
+        self.method = str(self.method).strip().lower()
+        if self.method not in ("standard", "minmax", "none"):
+            raise ValueError(f"不支持的归一化 method: {self.method!r}，可选: ['standard', 'minmax', 'none']")
+
     def fit(self, arr: np.ndarray) -> "Normalizer":
         x = np.asarray(arr, dtype=np.float64)
         if x.ndim == 1:
@@ -157,10 +162,23 @@ class DeepSetsSubsetCollator:
     ) -> None:
         self.pool_size = int(pool_size)
         self.sensor_counts = tuple(sorted({int(c) for c in sensor_counts}))
+        if self.pool_size <= 0 or not self.sensor_counts:
+            raise ValueError("pool_size 与 sensor_counts 必须非空且大于 0")
+        bad_counts = [c for c in self.sensor_counts if c <= 0 or c > self.pool_size]
+        if bad_counts:
+            raise ValueError(
+                f"training_sensor_counts {bad_counts} 超出候选总池大小 pool_size={self.pool_size}"
+            )
         self.token_dropout_prob = float(token_dropout_prob)
         self.sensor_noise_rel_std = float(sensor_noise_rel_std)
-        self._rng = np.random.default_rng(seed)
+        self._seed = int(seed)
+        self._rng = np.random.default_rng(self._seed)
         self._cycle: List[int] = []
+
+    def reset(self) -> None:
+        """重置内部随机流，确保验证集多次遍历输出一致。"""
+        self._rng = np.random.default_rng(self._seed)
+        self._cycle.clear()
 
     def __call__(self, batch: Sequence[Tuple[torch.Tensor, ...]]) -> Tuple[torch.Tensor, ...]:
         uvp, xy_nd, y, re_raw, st_raw, phase_true, re_id = default_collate(batch)
@@ -259,9 +277,16 @@ def load_encoder_training_data(
     sensor_noise_rel_std: float = 0.0,
 ) -> LoadedEncoderData:
     """公用训练数据加载函数：接收由训练 pipeline 解析好的显式参数并输出 DataLoader。"""
-    enc = str(encoder_type).lower()
+    enc = str(encoder_type).strip().lower()
+    if enc not in ("mlp", "deepsets"):
+        raise ValueError(f"不支持的 encoder_type: {encoder_type!r}，可选: ['mlp', 'deepsets']")
     train_re_list = [int(r) for r in train_re]
     val_re_list = [] if val_re is None else [int(r) for r in val_re]
+    if not train_re_list:
+        raise ValueError("train_re 不能为空")
+    overlap = set(train_re_list) & set(val_re_list)
+    if overlap:
+        raise ValueError(f"train_re 与 val_re 存在重叠工况: {sorted(overlap)}")
 
     # 1. 调用基础表面传感器模块，加载几何与 train/val 原始读数
     mesh = load_base_surface_mesh(processed_dir)
@@ -340,13 +365,23 @@ def load_encoder_training_data(
     val_ds: Optional[EncoderDataset] = None
     val_loader: Optional[DataLoader] = None
     if val_raw is not None:
+        val_collate = None
         if enc == "mlp":
             assert x_norm is not None
             val_x = x_norm.transform(val_raw["uvp"].reshape(len(val_raw["uvp"]), -1))
         else:
             val_x = ((val_raw["uvp"] - chan_mean) / chan_std).astype(np.float32)
+            if random_subset:
+                # 关闭增强、固定种子做子集整理，确保标准验证与训练分布一致
+                val_collate = DeepSetsSubsetCollator(
+                    pool_size=len(selected_idx),
+                    sensor_counts=training_sensor_counts,
+                    seed=int(seed) + 1,
+                    token_dropout_prob=0.0,
+                    sensor_noise_rel_std=0.0,
+                )
         val_ds = _build_ds(val_raw, val_x)
-        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=0)
+        val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False, collate_fn=val_collate, num_workers=0)
 
     # 4. 打印加载完成摘要
     val_count = 0 if val_ds is None else len(val_ds)

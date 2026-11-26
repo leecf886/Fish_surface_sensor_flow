@@ -25,6 +25,14 @@ _LOSS_FNS: Dict[str, Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = {
 }
 
 
+def _resolve_loss_fn(loss_type: str) -> Callable[[torch.Tensor, torch.Tensor], torch.Tensor]:
+    """解析基础损失函数类型，未知名称时抛出 ValueError。"""
+    key = loss_type.strip().lower()
+    if key not in _LOSS_FNS:
+        raise ValueError(f"不支持的 loss_type: {loss_type!r}，可选: {sorted(_LOSS_FNS)}")
+    return _LOSS_FNS[key]
+
+
 class EncoderLoss(nn.Module):
     """表面传感器编码器损失：对齐 4 维输出 `[Re_norm, St_norm, sinφ, cosφ]`。"""
 
@@ -41,7 +49,7 @@ class EncoderLoss(nn.Module):
         self.lambda_st = float(lambda_st)
         self.lambda_phase = float(lambda_phase)
         self.lambda_unit_circle = float(lambda_unit_circle)
-        self.criterion = _LOSS_FNS[loss_type.strip().lower()]
+        self.criterion = _resolve_loss_fn(loss_type)
 
     def forward(
         self,
@@ -181,7 +189,7 @@ class PPINNLoss(nn.Module):
         self.lambda_phys = float(lambda_phys)
         self.data_weights = tuple(float(w) for w in data_weights)
         self.phys_weights = tuple(float(w) for w in phys_weights)
-        self.criterion = _LOSS_FNS[loss_type.strip().lower()]
+        self.criterion = _resolve_loss_fn(loss_type)
 
     def forward(
         self,
@@ -199,10 +207,11 @@ class PPINNLoss(nn.Module):
         if residuals is not None and self.lambda_phys > 0.0:
             r_u, r_v, r_c = residuals
             w_ru, w_rv, w_rc = self.phys_weights
-            loss_mom_x = torch.mean(r_u * r_u)
-            loss_mom_y = torch.mean(r_v * r_v)
-            loss_cont = torch.mean(r_c * r_c)
-            loss_phys = w_ru * loss_mom_x + w_rv * loss_mom_y + w_rc * loss_cont
+            # 数据与物理残差共用 loss_type，且同样按 3 项等权平均以对齐量级
+            loss_mom_x = self.criterion(r_u, torch.zeros_like(r_u))
+            loss_mom_y = self.criterion(r_v, torch.zeros_like(r_v))
+            loss_cont = self.criterion(r_c, torch.zeros_like(r_c))
+            loss_phys = (w_ru * loss_mom_x + w_rv * loss_mom_y + w_rc * loss_cont) / 3.0
         else:
             zero = uvp_pred.new_zeros(())
             loss_mom_x = zero

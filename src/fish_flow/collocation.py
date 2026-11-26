@@ -78,10 +78,14 @@ def _sample_unit_hypercube(
             perm = rng.permutation(n)
             out[:, j] = (perm + rng.random(n)) / n
         return out
-    # sobol：使用 scramble=True 的低差异序列
-    seed = int(rng.integers(0, 2**31 - 1))
-    eng = torch.quasirandom.SobolEngine(dimension=dim, scramble=True, seed=seed)
-    return eng.draw(n).cpu().numpy().astype(np.float64)
+    if m == "sobol":
+        # sobol：使用 scramble=True 的低差异序列
+        seed = int(rng.integers(0, 2**31 - 1))
+        eng = torch.quasirandom.SobolEngine(dimension=dim, scramble=True, seed=seed)
+        return eng.draw(n).cpu().numpy().astype(np.float64)
+    raise ValueError(
+        f"不支持的 collocation_method: {method!r}，可选: ['latin_hypercube', 'uniform_random', 'sobol']"
+    )
 
 
 def collocation_fingerprint(col: Mapping[str, np.ndarray]) -> str:
@@ -128,6 +132,16 @@ def sample_collocation_points(
         - `col_dict` 包含 `x_nd, y_nd, re_val, st_val, phi, re_norm, st_norm`，形状均为 `[N, 1]`；
         - `stats` 包含采样计数、剔除数量与 SHA-256 指纹。
     """
+    if int(n_points) <= 0:
+        raise ValueError(f"n_points 必须为正整数，实际为 {n_points}")
+    m = method.strip().lower()
+    mode = re_st_mode.strip().lower()
+    if mode not in ("continuous_random", "discrete_train_re_random"):
+        raise ValueError(
+            f"不支持的 collocation_re_st_mode: {re_st_mode!r}，"
+            "可选: ['continuous_random', 'discrete_train_re_random']"
+        )
+
     rng = seed if isinstance(seed, np.random.Generator) else np.random.default_rng(int(seed))
     xmin, xmax, ymin, ymax = roi_bounds_nd
 
@@ -136,7 +150,7 @@ def sample_collocation_points(
 
     # 1. 在 5 维 [0, 1)^5 上采样空间与参数坐标，按需进行鱼体固体拒绝采样
     if not exclude_solid:
-        u = _sample_unit_hypercube(n_points, 5, method, rng)
+        u = _sample_unit_hypercube(n_points, 5, m, rng)
         proposed = n_points
         x_nd = xmin + (xmax - xmin) * u[:, 0]
         y_nd = ymin + (ymax - ymin) * u[:, 1]
@@ -146,8 +160,9 @@ def sample_collocation_points(
         u_parts: List[np.ndarray] = []
         need = int(n_points)
         while need > 0:
-            chunk = max(need * 4, 64)
-            u_chunk = _sample_unit_hypercube(chunk, 5, method, rng)
+            # LHS 首轮按 need 采样以保留绝大多数 1D 分层，其余方法按 batch 批量采样
+            chunk = need if (m == "latin_hypercube" and not x_parts) else max(need * 4, 64)
+            u_chunk = _sample_unit_hypercube(chunk, 5, m, rng)
             proposed += chunk
 
             x_chunk = xmin + (xmax - xmin) * u_chunk[:, 0]
@@ -168,15 +183,21 @@ def sample_collocation_points(
         u = np.concatenate(u_parts, axis=0)
         x_nd = np.concatenate(x_parts, axis=0)
         y_nd = np.concatenate(y_parts, axis=0)
+        if m == "latin_hypercube":
+            # 拒绝采样后对 (Re, St, φ) 重新做整批 N 点 LHS，保证参数维严格 1D 分层
+            u[:, 2:5] = _sample_unit_hypercube(int(n_points), 3, "latin_hypercube", rng)
 
     # 2. 映射 Re 与 St（不使用任何经验公式）
-    mode = re_st_mode.strip().lower()
     if mode == "continuous_random":
-        re_min, re_max = re_range  # type: ignore[misc]
-        st_min, st_max = st_range  # type: ignore[misc]
+        if re_range is None or st_range is None:
+            raise ValueError("continuous_random 模式必须提供 re_range 与 st_range")
+        re_min, re_max = re_range
+        st_min, st_max = st_range
         re_val = re_min + (re_max - re_min) * u[:, 2]
         st_val = st_min + (st_max - st_min) * u[:, 3]
     else:
+        if re_st_pairs is None or len(re_st_pairs) == 0:
+            raise ValueError("discrete_train_re_random 模式必须提供非空 re_st_pairs")
         pairs = np.asarray(re_st_pairs, dtype=np.float64)
         idx = np.minimum((u[:, 2] * len(pairs)).astype(np.int64), len(pairs) - 1)
         re_val = pairs[idx, 0]

@@ -34,6 +34,23 @@ from fish_flow.training.common import (
 )
 
 
+_VALID_RESAMPLE_MODES = ("fixed", "epoch", "batch")
+_VALID_SELECTION_METRICS = (
+    "data_mse",
+    "data_mse_gauge",
+    "u_rel_l2",
+    "v_rel_l2",
+    "p_rel_l2",
+    "p_rel_l2_raw",
+    "p_rel_l2_gauge_sameden",
+    "p_rel_l2_gauge_fluctden",
+    "p_gauge_offset_mean_abs",
+    "overall_rel_l2",
+    "overall_rel_l2_raw",
+    "overall_rel_l2_gauge_sameden",
+)
+
+
 @dataclass
 class PPINNTrainingConfig:
     """pPINN 纯参数训练配置。"""
@@ -263,7 +280,7 @@ class PPINNTrainer:
 
             residuals = None
             if criterion.lambda_phys > 0.0:
-                if cfg.resample_collocation_mode == "batch":
+                if cfg.resample_collocation_mode.strip().lower() == "batch":
                     col_t, _ = self._sample_collocation_tensors(data, collocation_rng, device)
                 else:
                     col_t = cached_col  # type: ignore[assignment]
@@ -336,6 +353,11 @@ class PPINNTrainer:
         )
 
         resample_mode = cfg.resample_collocation_mode.strip().lower()
+        if resample_mode not in _VALID_RESAMPLE_MODES:
+            raise ValueError(
+                f"不支持的 resample_collocation_mode: {cfg.resample_collocation_mode!r}，"
+                f"可选: {list(_VALID_RESAMPLE_MODES)}"
+            )
         fixed_col_tensors: Optional[Dict[str, torch.Tensor]] = None
         col_fingerprint: Optional[str] = None
         if resample_mode == "fixed":
@@ -347,6 +369,11 @@ class PPINNTrainer:
             out_path.mkdir(parents=True, exist_ok=True)
 
         sel_metric = cfg.checkpoint_selection_metric.strip().lower()
+        if sel_metric not in _VALID_SELECTION_METRICS:
+            raise ValueError(
+                f"不支持的 checkpoint_selection_metric: {cfg.checkpoint_selection_metric!r}，"
+                f"可选: {list(_VALID_SELECTION_METRICS)}"
+            )
         history = PPINNTrainHistory(
             best_metric_name=sel_metric,
             collocation_mode=resample_mode,
