@@ -1,0 +1,74 @@
+{
+  "task": "ppinn",
+  "processed_dir": "data/processed",
+  "train_re": [13500, 13750, 14000, 14500, 15000, 15250, 15500, 15750, 16000, 16500, 17000, 17500],
+  "val_re": [14750, 16750],
+  "test_re": [14250, 16250],
+  "data": {
+    "periodic_only": true,
+    "param_norm_method": "standard"
+  },
+  "model": {
+    "in_dim": 6,
+    "hidden_dims": [128, 128, 128, 128, 128, 128],
+    "out_dim": 3,
+    "activation": "tanh"
+  },
+  "training": {
+    "batch_size": 2048,
+    "steps_per_epoch": 200,
+    "num_epochs": 200,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0,
+    "lambda_data": 1.0,
+    "lambda_phys": 1.0,
+    "loss_type": "mse",
+    "data_weights": [1.0, 1.0, 1.0],
+    "phys_weights": [1.0, 1.0, 1.0],
+    "n_collocation": 4096,
+    "collocation_method": "latin_hypercube",
+    "collocation_re_st_mode": "continuous_random",
+    "exclude_solid_collocation": true,
+    "resample_collocation_mode": "fixed",
+    "pde_weight_schedule": {
+      "strategy": "constant",
+      "params": {
+        "start_weight": 0.0,
+        "end_weight": 1.0,
+        "start_epoch": 1,
+        "end_epoch": 100,
+        "step_size": 50,
+        "gamma": 2.0
+      }
+    },
+    "lr_scheduler": {
+      "strategy": "constant",
+      "params": {
+        "step_size": 50,
+        "gamma": 0.5,
+        "milestones": [100, 150],
+        "t_max": 200,
+        "eta_min": 1e-6,
+        "factor": 0.5,
+        "patience": 10,
+        "threshold": 1e-4,
+        "min_lr": 1e-6
+      }
+    },
+    "early_stopping": {
+      "enabled": false,
+      "patience": 20,
+      "min_delta": 0.0
+    },
+    "checkpoint_selection_metric": "data_mse",
+    "eval_chunk_size": 16384,
+    "val_every_n_epochs": 1,
+    "seed": 42,
+    "device": "auto",
+    "save_best": true,
+    "save_last": true,
+    "best_checkpoint_name": "best_ppinn.pt",
+    "last_checkpoint_name": "last_ppinn.pt",
+    "verbose": true
+  }
+}

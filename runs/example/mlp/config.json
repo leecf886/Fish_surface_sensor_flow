@@ -1,0 +1,57 @@
+{
+  "task": "mlp",
+  "processed_dir": "data/processed",
+  "train_re": [13500, 13750, 14000, 14500, 15000, 15250, 15500, 15750, 16000, 16500, 17000, 17500],
+  "val_re": [14750, 16750],
+  "test_re": [14250, 16250],
+  "data": {
+    "sensor_mode": "uniform_arc",
+    "n_sensors": 24,
+    "sensor_indices": null,
+    "batch_size": 256,
+    "periodic_only": true,
+    "x_norm_method": "standard",
+    "target_norm_method": "standard"
+  },
+  "model": {
+    "hidden_dims": [128, 128, 128],
+    "output_dim": 4,
+    "activation": "relu"
+  },
+  "training": {
+    "num_epochs": 200,
+    "learning_rate": 0.001,
+    "weight_decay": 0.0,
+    "lambda_re": 1.0,
+    "lambda_st": 1.0,
+    "lambda_phase": 1.0,
+    "loss_type": "mse",
+    "lambda_unit_circle": 0.0,
+    "lr_scheduler": {
+      "strategy": "constant",
+      "params": {
+        "step_size": 50,
+        "gamma": 0.5,
+        "milestones": [100, 150],
+        "t_max": 200,
+        "eta_min": 1e-6,
+        "factor": 0.5,
+        "patience": 10,
+        "threshold": 1e-4,
+        "min_lr": 1e-6
+      }
+    },
+    "early_stopping": {
+      "enabled": false,
+      "patience": 20,
+      "min_delta": 0.0
+    },
+    "seed": 42,
+    "device": "auto",
+    "save_best": true,
+    "save_last": false,
+    "checkpoint_name": "best_mlp.pt",
+    "last_checkpoint_name": "last_mlp.pt",
+    "verbose": true
+  }
+}

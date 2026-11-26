@@ -12,7 +12,7 @@
 
 1. **两层解耦与单文件配置约定**：
    - **底层纯参数接口**：`data/`、`collocation.py`、`models.py`、`losses.py`、`training/` 均不读取任何配置文件，全部通过显式函数/类参数传入。
-   - **上层单 `config.json` 驱动**：每次训练由 `runs/<exp>/config.json` 单独管控全部参数（`task`、`processed_dir`、`train_re / val_re / test_re`、`data`、`model`、`training`）；[config.py](file:///e:/code/Fish_surface_sensor_flow/src/fish_flow/config.py) 与 [scripts/train.py](file:///e:/code/Fish_surface_sensor_flow/scripts/train.py) 直接读取该文件启动训练，并将 checkpoint（`*.pt`）与 `history.json` 保存至同目录（不覆写原 `config.json`）。`runs/` 已被 `.gitignore` 忽略。
+   - **上层单 `config.json` 驱动**：每次训练由 `runs/<exp>/config.json` 单独管控全部参数（`task`、`processed_dir`、`train_re / val_re / test_re`、`data`、`model`、`training`）；[config.py](file:///e:/code/Fish_surface_sensor_flow/src/fish_flow/config.py) 与 [scripts/train.py](file:///e:/code/Fish_surface_sensor_flow/scripts/train.py) 直接读取该文件启动训练，并将 checkpoint（`*.pt`）与 `history.json` 保存至同目录（不覆写原 `config.json`）。`runs/` 下仅保留 `runs/example/` 纳入 Git 追踪，其余实验目录均由 `.gitignore` 忽略。
 2. **代码风格**：保持精简直接，不写防御性代码与防御性叙述；源码附带清晰中文注释。
 3. **物理与数学契约**：
    - 特征体长 $L = 0.200\text{ m}$，来流速度 $U_\infty = 1.0\text{ m/s}$，鱼头位于 $(0, 0)$，尾尖位于 $(L, 0)$。
@@ -57,12 +57,12 @@
 
 ### 2.3 已验证状态与默认训练入口
 
-- `runs/` 下已生成三套本地默认配置模板（Git 忽略）：`runs/mlp/config.json`、`runs/deepsets/config.json`、`runs/ppinn/config.json`，启动示例：
+- `runs/example/` 下已保留三套示例配置（受 Git 追踪，实际训练建议复制到 `runs/<exp>/` 后运行以免污染示例目录）：[runs/example/mlp/config.json](file:///e:/code/Fish_surface_sensor_flow/runs/example/mlp/config.json)、[runs/example/deepsets/config.json](file:///e:/code/Fish_surface_sensor_flow/runs/example/deepsets/config.json)、[runs/example/ppinn/config.json](file:///e:/code/Fish_surface_sensor_flow/runs/example/ppinn/config.json)，启动示例：
   ```powershell
   $env:PYTHONPATH='src'
-  python scripts/train.py --config runs/mlp
-  python scripts/train.py --config runs/deepsets
-  python scripts/train.py --config runs/ppinn
+  python scripts/train.py --config runs/example/mlp
+  python scripts/train.py --config runs/example/deepsets
+  python scripts/train.py --config runs/example/ppinn
   ```
 - [tests/test_training_pipeline.py](file:///e:/code/Fish_surface_sensor_flow/tests/test_training_pipeline.py) 已在 `surface_cylinder_flow` 环境下通过全部 3 项验证（`3 passed in 10.47s`）：包含全部 LR/PDE 调度与早停逻辑、Gauge 压强偏移不变性，以及基于真实 `data/processed/` 的 MLP / 504 全池 DeepSets / 5D 配点 pPINN 单 `config.json` 端到端训练与 checkpoint 落盘校验。
 

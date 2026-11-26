@@ -91,7 +91,7 @@ def test_single_run_config_mlp_deepsets_ppinn(tmp_path: Path) -> None:
     # 1. MLP：直接传入 runs/mlp_exp 目录，ckpt 与 config.json 存放于同一目录且原 config.json 不被覆盖
     mlp_dir = tmp_path / "runs" / "mlp_exp"
     mlp_dir.mkdir(parents=True)
-    mlp_cfg = json.loads((ROOT / "runs" / "mlp" / "config.json").read_text(encoding="utf-8"))
+    mlp_cfg = json.loads((ROOT / "runs" / "example" / "mlp" / "config.json").read_text(encoding="utf-8"))
     mlp_cfg["processed_dir"] = str(ROOT / "data" / "processed")
     mlp_cfg["training"]["num_epochs"] = 2
     mlp_cfg["training"]["verbose"] = False
@@ -112,7 +112,7 @@ def test_single_run_config_mlp_deepsets_ppinn(tmp_path: Path) -> None:
     # 2. DeepSets：504 全池随机子集 [12, 24, 48, 96] + 冻结验证面板
     ds_dir = tmp_path / "runs" / "deepsets_exp"
     ds_dir.mkdir(parents=True)
-    ds_cfg = json.loads((ROOT / "runs" / "deepsets" / "config.json").read_text(encoding="utf-8"))
+    ds_cfg = json.loads((ROOT / "runs" / "example" / "deepsets" / "config.json").read_text(encoding="utf-8"))
     ds_cfg["processed_dir"] = str(ROOT / "data" / "processed")
     ds_cfg["training"]["num_epochs"] = 2
     ds_cfg["training"]["panel_layouts_per_budget"] = 2
@@ -133,7 +133,7 @@ def test_single_run_config_mlp_deepsets_ppinn(tmp_path: Path) -> None:
     # 3. pPINN：5D 配点 + PDE 权重线性调度 + 余弦 LR + 整场 Gauge 验证
     pp_dir = tmp_path / "runs" / "ppinn_exp"
     pp_dir.mkdir(parents=True)
-    pp_cfg = json.loads((ROOT / "runs" / "ppinn" / "config.json").read_text(encoding="utf-8"))
+    pp_cfg = json.loads((ROOT / "runs" / "example" / "ppinn" / "config.json").read_text(encoding="utf-8"))
     pp_cfg["processed_dir"] = str(ROOT / "data" / "processed")
     pp_cfg["model"]["hidden_dims"] = [32, 32]
     pp_cfg["training"]["num_epochs"] = 2

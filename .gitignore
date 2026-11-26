@@ -53,7 +53,8 @@ configs/paths.json
 # Outputs & Run artifacts
 output/
 outputs/
-runs/
+runs/*
+!runs/example/
 tmp/
 tmp*/
 logs/
