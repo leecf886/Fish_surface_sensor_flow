@@ -178,7 +178,7 @@ def test_end_to_end_infer_configs_and_cli(tmp_path: Path) -> None:
     # 1. 训练极简 MLP / DeepSets / pPINN 获取真实格式 ckpt
     mlp_train_dir = tmp_path / "train_mlp"
     mlp_train_dir.mkdir()
-    mlp_cfg = json.loads((ROOT / "runs" / "example" / "mlp" / "config.json").read_text(encoding="utf-8"))
+    mlp_cfg = json.loads((ROOT / "runs" / "example" / "mlp_uniform_24" / "config.json").read_text(encoding="utf-8"))
     mlp_cfg["processed_dir"] = proc_dir
     mlp_cfg["training"]["num_epochs"] = 1
     mlp_cfg["training"]["verbose"] = False
@@ -320,12 +320,19 @@ def test_end_to_end_infer_configs_and_cli(tmp_path: Path) -> None:
 
 
 def test_example_cascade_config_and_mlp_layout_guards(tmp_path: Path) -> None:
-    """校验 infer_cascade 示例配置与 DeepSets 候选总池一致，且 SensorMLP 拒绝错位传感器布局。"""
+    """校验串联示例配置与编码器/解码器权重及 24 传感器布局一致，且 SensorMLP 拒绝错位传感器布局。"""
     ds_ex = json.loads((ROOT / "runs" / "example" / "deepsets" / "config.json").read_text(encoding="utf-8"))
-    cas_ex = json.loads((ROOT / "runs" / "example" / "infer_cascade" / "config.json").read_text(encoding="utf-8"))
+    ds_cas_ex = json.loads((ROOT / "runs" / "example" / "infer_deepsets_uniform_24_ppinn" / "config.json").read_text(encoding="utf-8"))
+    mlp_cas_ex = json.loads((ROOT / "runs" / "example" / "infer_mlp_uniform_24_ppinn" / "config.json").read_text(encoding="utf-8"))
     assert ds_ex["data"]["sensor_pool"] == "cand60"
-    assert cas_ex.get("sensor_mode") == "cand60"
-    assert cas_ex.get("encoder_ckpt") == "runs/example/deepsets/best_deepsets.pt"
+    assert ds_cas_ex.get("mode") == "cascade"
+    assert ds_cas_ex.get("encoder_ckpt") == "runs/example/deepsets/best_deepsets.pt"
+    assert ds_cas_ex.get("ppinn_ckpt") == "runs/example/ppinn/best_ppinn.pt"
+    assert len(ds_cas_ex.get("sensor_indices", [])) in ds_ex["data"]["training_sensor_counts"]
+    assert mlp_cas_ex.get("mode") == "cascade"
+    assert mlp_cas_ex.get("encoder_ckpt") == "runs/example/mlp_uniform_24/best_mlp.pt"
+    assert mlp_cas_ex.get("ppinn_ckpt") == "runs/example/ppinn/best_ppinn.pt"
+    assert mlp_cas_ex.get("sensor_indices") == ds_cas_ex.get("sensor_indices")
 
     # 构造 SensorMLP ckpt，检验索引/坐标/数量不一致及配置文件覆盖报错
     enc_re_norm = Normalizer("standard").fit(np.array([13500.0, 17500.0]))

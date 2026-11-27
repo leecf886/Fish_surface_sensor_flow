@@ -64,7 +64,7 @@ def test_postprocess_all_modes_and_cli(tmp_path: Path) -> None:
     # 1. 快速训练 1 轮 MLP 与 pPINN
     mlp_dir = tmp_path / "train_mlp"
     mlp_dir.mkdir()
-    mlp_cfg = json.loads((ROOT / "runs" / "example" / "mlp" / "config.json").read_text(encoding="utf-8"))
+    mlp_cfg = json.loads((ROOT / "runs" / "example" / "mlp_uniform_24" / "config.json").read_text(encoding="utf-8"))
     mlp_cfg["processed_dir"] = proc_dir
     mlp_cfg["training"]["num_epochs"] = 1
     mlp_cfg["training"]["verbose"] = False

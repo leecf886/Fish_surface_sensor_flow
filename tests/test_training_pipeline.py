@@ -102,7 +102,7 @@ def test_single_run_config_mlp_deepsets_ppinn(tmp_path: Path) -> None:
     # 1. MLP：直接传入 runs/mlp_exp 目录，ckpt 与 config.json 存放于同一目录且原 config.json 不被覆盖
     mlp_dir = tmp_path / "runs" / "mlp_exp"
     mlp_dir.mkdir(parents=True)
-    mlp_cfg = json.loads((ROOT / "runs" / "example" / "mlp" / "config.json").read_text(encoding="utf-8"))
+    mlp_cfg = json.loads((ROOT / "runs" / "example" / "mlp_uniform_24" / "config.json").read_text(encoding="utf-8"))
     mlp_cfg["processed_dir"] = str(ROOT / "data" / "processed")
     mlp_cfg["training"]["num_epochs"] = 2
     mlp_cfg["training"]["verbose"] = False
@@ -133,7 +133,7 @@ def test_single_run_config_mlp_deepsets_ppinn(tmp_path: Path) -> None:
 
     _, ds_hist = run_from_config(ds_dir / "config.json")
     assert len(ds_hist.epochs) == 2
-    assert ds_hist.lr[0] == ds_hist.lr[1]
+    assert ds_hist.lr[1] < ds_hist.lr[0]
     assert set(ds_hist.val_by_budget[0].keys()) == {"6", "12", "24", "36", "48"}
     assert (ds_dir / "config.json").read_text(encoding="utf-8") == ds_raw_text
     ds_ckpt = torch.load(ds_dir / "best_deepsets.pt", map_location="cpu", weights_only=False)
@@ -232,7 +232,7 @@ def test_strict_validation_and_split_disjointness(tmp_path: Path) -> None:
         sample_collocation_points(32, (-0.5, 4.5, -0.8, 0.8), re_norm, st_norm, re_range=(13500, 17500), st_range=(2.4, 2.7), re_st_mode="bad")
 
     # 划分重叠与未知 task 应立即拒绝
-    bad_cfg = json.loads((ROOT / "runs" / "example" / "mlp" / "config.json").read_text(encoding="utf-8"))
+    bad_cfg = json.loads((ROOT / "runs" / "example" / "mlp_uniform_24" / "config.json").read_text(encoding="utf-8"))
     bad_cfg["processed_dir"] = str(ROOT / "data" / "processed")
     bad_cfg["train_re"] = bad_cfg["train_re"] + [bad_cfg["test_re"][0]]
     bad_dir = tmp_path / "bad_split"
@@ -241,7 +241,7 @@ def test_strict_validation_and_split_disjointness(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="test_re"):
         run_from_config(bad_dir)
 
-    bad_task_cfg = json.loads((ROOT / "runs" / "example" / "mlp" / "config.json").read_text(encoding="utf-8"))
+    bad_task_cfg = json.loads((ROOT / "runs" / "example" / "mlp_uniform_24" / "config.json").read_text(encoding="utf-8"))
     bad_task_cfg["task"] = "transformer"
     bad_task_dir = tmp_path / "bad_task"
     bad_task_dir.mkdir()
