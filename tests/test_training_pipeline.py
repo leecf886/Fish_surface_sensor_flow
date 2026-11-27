@@ -120,7 +120,7 @@ def test_single_run_config_mlp_deepsets_ppinn(tmp_path: Path) -> None:
     assert mlp_ckpt["normalizers"]["st_normalizer"] is not None
     assert mlp_ckpt["normalizers"]["x_normalizer"] is not None
 
-    # 2. DeepSets：504 全池随机子集 [12, 24, 48, 96] + 冻结验证面板
+    # 2. DeepSets：cand60 候选池随机子集 [6, 12, 24, 36, 48] + 冻结验证面板
     ds_dir = tmp_path / "runs" / "deepsets_exp"
     ds_dir.mkdir(parents=True)
     ds_cfg = json.loads((ROOT / "runs" / "example" / "deepsets" / "config.json").read_text(encoding="utf-8"))
@@ -134,7 +134,7 @@ def test_single_run_config_mlp_deepsets_ppinn(tmp_path: Path) -> None:
     _, ds_hist = run_from_config(ds_dir / "config.json")
     assert len(ds_hist.epochs) == 2
     assert ds_hist.lr[0] == ds_hist.lr[1]
-    assert set(ds_hist.val_by_budget[0].keys()) == {"12", "24", "48", "96"}
+    assert set(ds_hist.val_by_budget[0].keys()) == {"6", "12", "24", "36", "48"}
     assert (ds_dir / "config.json").read_text(encoding="utf-8") == ds_raw_text
     ds_ckpt = torch.load(ds_dir / "best_deepsets.pt", map_location="cpu", weights_only=False)
     assert ds_ckpt["normalizers"]["chan_mean"] is not None

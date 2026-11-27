@@ -55,6 +55,7 @@ output/
 outputs/
 runs/*
 !runs/example/
+!runs/example/deepsets/*.pt
 tmp/
 tmp*/
 logs/

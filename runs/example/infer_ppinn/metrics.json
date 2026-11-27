@@ -1,0 +1,86 @@
+{
+  "mode": "decoder",
+  "pred_path": "runs/example/infer_ppinn/decoder_pred.npz",
+  "raw_dir": "data/processed",
+  "re_ids": [
+    14250,
+    16250
+  ],
+  "periodic_only": true,
+  "figures": [
+    "runs/example/infer_ppinn/field_comparison_Re14250_f5.png",
+    "runs/example/infer_ppinn/field_comparison_Re16250_f5.png",
+    "runs/example/infer_ppinn/field_comparison_Re14250_f10.png",
+    "runs/example/infer_ppinn/field_comparison_Re16250_f10.png"
+  ],
+  "field_metrics": {
+    "overall": {
+      "n_frames": 160,
+      "n_points": 32084,
+      "u_rel_l2": 0.021749696443071356,
+      "v_rel_l2": 0.2622335015978591,
+      "p_rel_l2_raw": 0.16095004292836632,
+      "p_rel_l2_gauge_sameden": 0.16075185129286293,
+      "p_rel_l2_gauge_fluctden": 0.17446209389339518,
+      "p_gauge_offset_mean_abs": 0.0004937521071627914,
+      "overall_rel_l2_gauge_sameden": 0.14824501644459778,
+      "u_mae": 0.009962914547136955,
+      "u_rmse": 0.02036763461949117,
+      "v_mae": 0.010717322995172314,
+      "v_rmse": 0.02384526880985156,
+      "p_gauge_mae": 0.0065982126540466805,
+      "p_gauge_rmse": 0.012995183151094023,
+      "wake_n_points": 7524,
+      "wake_u_rel_l2": 0.02093928503311834,
+      "wake_v_rel_l2": 0.44258482443544833,
+      "wake_p_rel_l2_gauge_sameden": 0.5255273032043534,
+      "wake_overall_rel_l2_gauge_sameden": 0.32968380422430665
+    },
+    "by_re": {
+      "14250": {
+        "n_frames": 80,
+        "n_points": 32084,
+        "u_rel_l2": 0.015728665357553684,
+        "v_rel_l2": 0.2308789693592702,
+        "p_rel_l2_raw": 0.10421807564830712,
+        "p_rel_l2_gauge_sameden": 0.10418806672067145,
+        "p_rel_l2_gauge_fluctden": 0.11324913280095834,
+        "p_gauge_offset_mean_abs": 0.00015410731124393458,
+        "overall_rel_l2_gauge_sameden": 0.11693190047916512,
+        "u_mae": 0.007852388055817304,
+        "u_rmse": 0.014726714323714498,
+        "v_mae": 0.009006900688444832,
+        "v_rmse": 0.02029428405190164,
+        "p_gauge_mae": 0.004931051957201718,
+        "p_gauge_rmse": 0.008150304431130025,
+        "wake_n_points": 7524,
+        "wake_u_rel_l2": 0.021186487830399427,
+        "wake_v_rel_l2": 0.45248728880713357,
+        "wake_p_rel_l2_gauge_sameden": 0.5549157774589045,
+        "wake_overall_rel_l2_gauge_sameden": 0.34286318469881255
+      },
+      "16250": {
+        "n_frames": 80,
+        "n_points": 32084,
+        "u_rel_l2": 0.026430194632088858,
+        "v_rel_l2": 0.28692354016664195,
+        "p_rel_l2_raw": 0.19786148812894372,
+        "p_rel_l2_gauge_sameden": 0.1975722223171738,
+        "p_rel_l2_gauge_fluctden": 0.2141318357601481,
+        "p_gauge_offset_mean_abs": 0.000833396903081648,
+        "overall_rel_l2_gauge_sameden": 0.1703086523719682,
+        "u_mae": 0.012073441038456605,
+        "u_rmse": 0.024754897802533794,
+        "v_mae": 0.012427745301899796,
+        "v_rmse": 0.026932057553200238,
+        "p_gauge_mae": 0.008265373350891649,
+        "p_gauge_rmse": 0.016471858059759325,
+        "wake_n_points": 7524,
+        "wake_u_rel_l2": 0.020690460228046034,
+        "wake_v_rel_l2": 0.43462453086337943,
+        "wake_p_rel_l2_gauge_sameden": 0.5024177353700776,
+        "wake_overall_rel_l2_gauge_sameden": 0.31924424215383435
+      }
+    }
+  }
+}

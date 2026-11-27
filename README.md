@@ -21,7 +21,7 @@ flowchart LR
 
 核心物理与科研约束：
 - **显式 $St$ 建模**：不使用任何 $Re \mapsto St$ 经验公式；编码器直接预测 4 维 `[Re_norm, St_norm, sinφ, cosφ]`，pPINN 接收 6 维 `[x*, y*, Re_norm, St_norm, sinφ, cosφ]`，PDE 配点在 5 维 `(x*, y*, Re, St, φ)` 独立采样。
-- **物理量纲约定**：流场与传感器 3 通道为 `[Ux (m/s), Uy (m/s), p_kin (m^2/s^2)]`（运动压强 $p_{\text{kin}} = p/\rho$），无量纲化采用 `pressure_scale_mode = "uinf2"`（$u^* = U_x/U_\infty,\ v^* = U_y/U_\infty,\ p^* = p_{\text{kin}}/U_\infty^2$）。
+- **物理量纲约定**：流场与传感器 3 通道为 `[Ux (m/s), Uy (m/s), p_kin (m^2/s^2)]`（运动压强 $p_{\text{kin}} = p/\rho$），无量纲化采用 `pressure_scale_mode = "uinf2"`（$`u^* = U_x/U_\infty,\ v^* = U_y/U_\infty,\ p^* = p_{\text{kin}}/U_\infty^2$`$）。
 - **严格工况防泄漏**：共 16 个雷诺数工况（`13500`–`17500`，无 `17250`），默认划分 `train_re`（12 个）、`val_re`（`14750, 16750`）与锁定 `test_re`（`14250, 16250`），归一化统计量仅在 `train_re` 拟合。
 
 ### 1.2 两层解耦架构
@@ -221,7 +221,7 @@ pytest -v tests/test_training_pipeline.py tests/test_inference_pipeline.py tests
 
 - **研究目的**：验证稀疏测点预算变化下，固定布局 `MLP`、动态集合 `DeepSets` 与线性 `SurfacePOD` 的重构精度退化规律。
 - **实验设计**：
-  - **候选总池**：统一限定在 `mesh.h5` 预置的 60 个等弧长候选点（`cand60`）内部，按弧长均匀抽取不同传感器数量 $K$（例如 $K \in \{6, 12, 18, 24, 36, 48, 60\}$）。
+  - **候选总池**：统一限定在 `mesh.h5` 预置的 60 个等弧长候选点（`cand60`）内部，按弧长均匀抽取不同传感器数量 $K$（例如 $`K \in \{6, 12, 18, 24, 36, 48, 60\}`$）。
   - **模型对比方式**：
     - `MLP`：针对每个 $K$ 分别训练与推理对应输入维度 `3*K` 的固定网络；
     - `DeepSets`：在 `sensor_pool = "cand60"` 上进行多预算随机子集训练（仅训练一次），推理时依次在 60 点内均匀取 $K$ 点测试动态泛化能力；
@@ -241,7 +241,7 @@ pytest -v tests/test_training_pipeline.py tests/test_inference_pipeline.py tests
 
 - **研究目的**：评估传感器物理读数受到测量噪声污染时，`MLP`、`DeepSets` 串联重构与 `SurfacePOD` 线性重构的鲁棒性。
 - **实验设计**：
-  - **自变量**：推理期注入传感器物理读数 `[Ux, Uy, p_kin]` 的高斯噪声相对强度 $\eta$（例如 $\eta \in \{0\%, 1\%, 3\%, 5\%, 10\%\}$，以训练集各通道标准差 $\sigma_{\text{train}, c}$ 为基准：$\tilde{x}_c = x_c + \mathcal{N}(0, (\eta \cdot \sigma_{\text{train}, c})^2)$）。
+  - **自变量**：推理期注入传感器物理读数 `[Ux, Uy, p_kin]` 的高斯噪声相对强度 $\eta$（例如 $`\eta \in \{0\%, 1\%, 3\%, 5\%, 10\%\}`$，以训练集各通道标准差 $`\sigma_{\text{train}, c}`$ 为基准：$`\tilde{x}_c = x_c + \mathcal{N}(0, (\eta \cdot \sigma_{\text{train}, c})^2)`$）。
   - **对比维度**：在同噪声输入下横向对比 `MLP`、`DeepSets`（含无噪训练与开启 `sensor_noise_rel_std` 增强训练两版）以及 `SurfacePOD`。
   - **评估路径**：`encoder` 原始精度 + `cascade` 串联精度 + `SurfacePOD` 含噪重构精度（固定多组测试噪声种子求均值与标准差）。
   - **代码衔接备注**：当前仅 `DeepSets` 训练期支持 `sensor_noise_rel_std`；正式开展本实验前，需在推理模块补充统一的推理期高斯噪声注入参数（按训练集统计量标定噪声尺度）。

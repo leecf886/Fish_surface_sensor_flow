@@ -1,0 +1,130 @@
+{
+  "mode": "cascade",
+  "pred_path": "runs/example/infer_mlp_uniform_24_ppinn/cascade_pred.npz",
+  "raw_dir": "data/processed",
+  "re_ids": [
+    14250,
+    16250
+  ],
+  "periodic_only": true,
+  "figures": [
+    "runs/example/infer_mlp_uniform_24_ppinn/encoder_comparison.png",
+    "runs/example/infer_mlp_uniform_24_ppinn/field_comparison_Re14250_f5.png",
+    "runs/example/infer_mlp_uniform_24_ppinn/field_comparison_Re16250_f5.png",
+    "runs/example/infer_mlp_uniform_24_ppinn/field_comparison_Re14250_f10.png",
+    "runs/example/infer_mlp_uniform_24_ppinn/field_comparison_Re16250_f10.png"
+  ],
+  "encoder_metrics": {
+    "overall": {
+      "n_samples": 160,
+      "re_mae": 10.088577503932992,
+      "re_rmse": 13.347079365754373,
+      "re_rel_l2": 0.0008733426816160016,
+      "re_mape": 0.0006869275617343692,
+      "st_mae": 0.0013533070162779688,
+      "st_rmse": 0.0014195867599120927,
+      "st_rel_l2": 0.0005592749712141447,
+      "st_mape": 0.0005348086119965394,
+      "phase_cmae": 0.008735974157170024,
+      "phase_crmse": 0.010392782379206796
+    },
+    "by_re": {
+      "14250": {
+        "n_samples": 80,
+        "re_mae": 15.30443408306976,
+        "re_rmse": 17.67962845580576,
+        "re_rel_l2": 0.0012406756811091761,
+        "re_mape": 0.0010739953742505092,
+        "st_mae": 0.0015346699725997282,
+        "st_rmse": 0.001607822689267493,
+        "st_rel_l2": 0.0006458111290842174,
+        "st_mape": 0.0006164280143523887,
+        "phase_cmae": 0.006902411717199219,
+        "phase_crmse": 0.008383195447354547
+      },
+      "16250": {
+        "n_samples": 80,
+        "re_mae": 4.872720924796226,
+        "re_rmse": 6.6120944379338376,
+        "re_rel_l2": 0.00040689811925746696,
+        "re_mape": 0.00029985974921822926,
+        "st_mae": 0.0011719440599562091,
+        "st_rmse": 0.0012022309835102705,
+        "st_rel_l2": 0.00046490112270643506,
+        "st_mape": 0.00045318920964069006,
+        "phase_cmae": 0.010569536597140827,
+        "phase_crmse": 0.01207236038455432
+      }
+    }
+  },
+  "field_metrics": {
+    "overall": {
+      "n_frames": 160,
+      "n_points": 32084,
+      "u_rel_l2": 0.02202232321781661,
+      "v_rel_l2": 0.2614915520351329,
+      "p_rel_l2_raw": 0.16007267088778696,
+      "p_rel_l2_gauge_sameden": 0.15967459181780788,
+      "p_rel_l2_gauge_fluctden": 0.17329295685283813,
+      "p_gauge_offset_mean_abs": 0.0007429875915642324,
+      "overall_rel_l2_gauge_sameden": 0.14772948902358582,
+      "u_mae": 0.01016180384689552,
+      "u_rmse": 0.02062293760958281,
+      "v_mae": 0.010599146585282408,
+      "v_rmse": 0.023777802270836694,
+      "p_gauge_mae": 0.006573922484331305,
+      "p_gauge_rmse": 0.012908097471725468,
+      "wake_n_points": 7524,
+      "wake_u_rel_l2": 0.021004567521046152,
+      "wake_v_rel_l2": 0.44252025764062486,
+      "wake_p_rel_l2_gauge_sameden": 0.5146526881703082,
+      "wake_overall_rel_l2_gauge_sameden": 0.32605917111065974
+    },
+    "by_re": {
+      "14250": {
+        "n_frames": 80,
+        "n_points": 32084,
+        "u_rel_l2": 0.018827435488212942,
+        "v_rel_l2": 0.23401155343549138,
+        "p_rel_l2_raw": 0.10690182865830385,
+        "p_rel_l2_gauge_sameden": 0.10595494602276165,
+        "p_rel_l2_gauge_fluctden": 0.11516967471159903,
+        "p_gauge_offset_mean_abs": 0.0008941573330290837,
+        "overall_rel_l2_gauge_sameden": 0.11959797831548864,
+        "u_mae": 0.009029170581239533,
+        "u_rmse": 0.01762808589159278,
+        "v_mae": 0.009157127106864065,
+        "v_rmse": 0.020569638499453636,
+        "p_gauge_mae": 0.0051242815261848705,
+        "p_gauge_rmse": 0.008288521836043639,
+        "wake_n_points": 7524,
+        "wake_u_rel_l2": 0.021146891063365245,
+        "wake_v_rel_l2": 0.4572670488632586,
+        "wake_p_rel_l2_gauge_sameden": 0.5208150765946122,
+        "wake_overall_rel_l2_gauge_sameden": 0.33307633884041205
+      },
+      "16250": {
+        "n_frames": 80,
+        "n_points": 32084,
+        "u_rel_l2": 0.024807356175941323,
+        "v_rel_l2": 0.2834055007526718,
+        "p_rel_l2_raw": 0.19524527088128593,
+        "p_rel_l2_gauge_sameden": 0.19508668422066133,
+        "p_rel_l2_gauge_fluctden": 0.21143797105985854,
+        "p_gauge_offset_mean_abs": 0.0005918178500993812,
+        "overall_rel_l2_gauge_sameden": 0.16776651371642481,
+        "u_mae": 0.011294437112551505,
+        "u_rmse": 0.02323492412503466,
+        "v_mae": 0.01204116606370075,
+        "v_rmse": 0.026601837035509557,
+        "p_gauge_mae": 0.008023563442477738,
+        "p_gauge_rmse": 0.016264635454032127,
+        "wake_n_points": 7524,
+        "wake_u_rel_l2": 0.020862033739051926,
+        "wake_v_rel_l2": 0.43054676549650833,
+        "wake_p_rel_l2_gauge_sameden": 0.509993669634581,
+        "wake_overall_rel_l2_gauge_sameden": 0.3204674896233804
+      }
+    }
+  }
+}

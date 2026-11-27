@@ -280,7 +280,7 @@ def test_end_to_end_infer_configs_and_cli(tmp_path: Path) -> None:
         assert z["xy"].shape == (32084, 2)
         assert np.all(np.isfinite(z["uvp_pred"]))
 
-    # 4. 串联推理通过 CLI scripts/infer.py 调用（DeepSets 24 传感器子集 + pPINN，验证工况 14750）
+    # 4. 串联推理通过 CLI scripts/infer.py 调用（DeepSets cand60 传感器池 + pPINN，验证工况 14750）
     cas_cfg_path = tmp_path / "cfg_cascade.json"
     cas_out_dir = tmp_path / "out_cascade"
     cas_cfg_text = json.dumps(
@@ -290,8 +290,7 @@ def test_end_to_end_infer_configs_and_cli(tmp_path: Path) -> None:
             "ppinn_ckpt": str(pp_train_dir / "best_ppinn.pt"),
             "processed_dir": proc_dir,
             "re_list": [14750],
-            "sensor_mode": "uniform_arc",
-            "n_sensors": 24,
+            "sensor_mode": "cand60",
             "output_dir": str(cas_out_dir),
             "output_name": "cascade_pred.npz",
             "chunk_size": 16384,
@@ -316,16 +315,17 @@ def test_end_to_end_infer_configs_and_cli(tmp_path: Path) -> None:
         assert set(z.files) >= {"re_pred", "st_pred", "phase_pred", "uvp_pred", "xy", "re_id", "sensor_indices"}
         assert z["re_pred"].shape == (80,)
         assert z["uvp_pred"].shape == (80, 32084, 3)
-        assert z["sensor_indices"].shape == (24,)
+        assert z["sensor_indices"].shape == (60,)
         assert np.all(np.isfinite(z["uvp_pred"]))
 
 
 def test_example_cascade_config_and_mlp_layout_guards(tmp_path: Path) -> None:
-    """校验 infer_cascade 示例配置与 DeepSets 训练分布一致，且 SensorMLP 拒绝错位传感器布局。"""
+    """校验 infer_cascade 示例配置与 DeepSets 候选总池一致，且 SensorMLP 拒绝错位传感器布局。"""
     ds_ex = json.loads((ROOT / "runs" / "example" / "deepsets" / "config.json").read_text(encoding="utf-8"))
     cas_ex = json.loads((ROOT / "runs" / "example" / "infer_cascade" / "config.json").read_text(encoding="utf-8"))
-    assert cas_ex.get("sensor_mode") == "uniform_arc"
-    assert cas_ex.get("n_sensors") in ds_ex["data"]["training_sensor_counts"]
+    assert ds_ex["data"]["sensor_pool"] == "cand60"
+    assert cas_ex.get("sensor_mode") == "cand60"
+    assert cas_ex.get("encoder_ckpt") == "runs/example/deepsets/best_deepsets.pt"
 
     # 构造 SensorMLP ckpt，检验索引/坐标/数量不一致及配置文件覆盖报错
     enc_re_norm = Normalizer("standard").fit(np.array([13500.0, 17500.0]))
