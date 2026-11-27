@@ -35,13 +35,14 @@ flowchart LR
 | :--- | :--- |
 | **`configs/`** | |
 | `configs/mesh_roi_params.json` | 预处理生成的 ROI 裁剪边界、网格单元索引与候选传感器索引参数 |
-| **`runs/example/`** | 受 Git 追踪的配置模板（建议复制到新目录后修改运行，避免污染示例） |
-| `runs/example/{mlp,deepsets,ppinn}/config.json` | MLP 编码器、DeepSets 动态集合编码器与 pPINN 解码器训练配置示例 |
-| `runs/example/infer_{encoder,decoder,cascade}/config.json` | 编码器单独推理、解码器单独推理与串联推理配置示例 |
+| **`runs/example/`** | 受 Git 追踪的配置模板（建议复制到新目录后修改或通过 `--output-dir` 指定输出目录，避免污染示例） |
+| `runs/example/{mlp_uniform_24,deepsets,ppinn}/config.json` | 24 点均匀布局 MLP 编码器、DeepSets 动态集合编码器与 pPINN 解码器训练配置示例 |
+| `runs/example/infer_{mlp_uniform_24,deepsets_uniform_24,ppinn,mlp_uniform_24_ppinn,deepsets_uniform_24_ppinn}/config.json` | 编码器单独推理（MLP / DeepSets）、解码器单独推理（pPINN）与串联推理（MLP+pPINN / DeepSets+pPINN）配置示例 |
 | **`scripts/`** | 命令行统一入口脚本 |
 | `scripts/prepare_fish_mesh.py` | 解析 `msh/fish_fluent.msh`，确定 ROI 与候选传感器，输出 `mesh.h5` 与网格对比图 |
 | `scripts/preprocess_fish_npz.py` | 循环读取 `data_files/Re*/two_cycles.npz` 与 `cycle_quality.json`，输出 `ReXXX.h5` |
 | `scripts/train.py` | 单 `config.json` 训练启动入口，统一调度 MLP / DeepSets / pPINN 训练 |
+| `scripts/plot_loss.py` | 读取训练目录或 `history.json`，绘制损失、学习率与验证指标收敛曲线（默认输出 `loss_curve.png`） |
 | `scripts/infer.py` | 单 `config.json` 推理启动入口，支持 `encoder` / `decoder` / `cascade` 三种模式 |
 | `scripts/postprocess.py` | 推理结果后处理入口，按模式计算物理误差指标并生成对比云图 |
 | **`src/fish_flow/`** | 核心 Python 包（需设置 `PYTHONPATH=src`） |
@@ -54,6 +55,7 @@ flowchart LR
 | `src/fish_flow/training/common.py` | 随机种子、回归/圆周相位指标、`PressureGaugeAccum`、早停、学习率调度与 PDE 权重调度 |
 | `src/fish_flow/training/{mlp,deepsets,ppinn}.py` | MLP、DeepSets（含冻结多预算验证面板）与 pPINN 独立训练器及历史记录 |
 | `src/fish_flow/config.py` | 单 `config.json` 解析并分发至对应训练器，保存 `best_*.pt` 与 `history.json` |
+| `src/fish_flow/plot_loss.py` | 训练历史任务自动识别与 MLP / DeepSets / pPINN 收敛曲线绘制模块 |
 | `src/fish_flow/inference/core.py` | ckpt 加载、纯内存物理量纲前向（归一化 → 分块前向 → 反归一化/物理量纲还原）与串联桥接 |
 | `src/fish_flow/inference/data.py` | 复用基础数据模块读取未归一化 `.h5` 传感器读数与解码器参数空间/ROI 坐标 |
 | `src/fish_flow/inference/runner.py` | 推理配置解析、复制原 `config.json` 至输出目录并导出 `.npz` 结果 |
@@ -61,6 +63,7 @@ flowchart LR
 | **`pyproject.toml` / `environment.yml` / `requirements.txt`** | 项目打包元信息与 Conda / pip 一键环境配置 |
 | **`tests/`** | |
 | `tests/test_{training,inference,postprocess}_pipeline.py` | 训练、推理与后处理端到端连通性及数学不变性单元测试 |
+| `tests/test_plot_loss.py` | 训练损失可视化模块纯参数接口与 CLI 单元测试 |
 
 ---
 
@@ -86,6 +89,8 @@ pip install -r requirements.txt
 
 ### 2.1 数据预处理（`.msh` + `.npz` → `.h5`）
 
+> 若 `data/processed/` 下已包含预处理好的 `mesh.h5` 与 `Re13500.h5` ~ `Re17500.h5`（且含 `/sensors/wall_*` 数据集），可直接跳过本节进入 `2.2`；从零复现时需自备原始 CFD 工况目录（含 `Re*/two_cycles.npz` 与 `Re*/cycle_quality.json`，该原始数据目录未随仓库分发）。
+
 **第一步：网格解析与核心密集区（ROI）提取**
 
 读取 `msh/fish_fluent.msh`，转换至鱼头原点无量纲坐标系，截取密集区域 `x/L ∈ [-0.5, 4.5], y/L ∈ [-0.8, 0.8]`（32,084 单元）并抽取候选传感器：
@@ -98,13 +103,16 @@ python scripts/prepare_fish_mesh.py
 
 **第二步：工况数据裁剪与 HDF5 打包**
 
-单线程循环读取 `data_files/Re*/two_cycles.npz` 与 `cycle_quality.json`，提取 ROI 流场、真实 `St` 与弧度相位：
+单线程循环读取原始工况目录下的 `Re*/two_cycles.npz` 与 `cycle_quality.json`，提取 ROI 流场、真实 `St` 与弧度相位：
 
 ```powershell
 python scripts/preprocess_fish_npz.py
+# 若原始工况目录不在默认的 data_files/，可通过 --data-dir 指定路径：
+python scripts/preprocess_fish_npz.py --data-dir D:\path\to\data_files
 ```
 
-输出：`data/processed/Re13500.h5` ~ `Re17500.h5`（共 16 个工况，保持原始物理量纲）。
+- 默认参数：`--data-dir data_files`、`--params configs/mesh_roi_params.json`、`--out-dir data/processed`。
+- 输出：`data/processed/Re13500.h5` ~ `Re17500.h5`（共 16 个工况，保持原始物理量纲）。
 
 **第三步：构建 504 壁面近壁基础传感器池**
 
@@ -115,22 +123,22 @@ python -m fish_flow.data.surface_sensors
 ```
 
 要求与说明：
-- 该步会在 `mesh.h5` 写入 `/sensors/wall_xy`、`/sensors/wall_xy_nd`、`/sensors/wall_arc`，并在各 `ReXXX.h5` 写入 `/sensors/wall_uvp`（`[80, 504, 3]`）；所有后续训练与推理均依赖此数据集。
+- 该步默认读写 `data/processed/`，会在 `mesh.h5` 写入 `/sensors/wall_xy`、`/sensors/wall_xy_nd`、`/sensors/wall_arc`，并在各 `ReXXX.h5` 写入 `/sensors/wall_uvp`（`[80, 504, 3]`）；所有后续训练与推理均依赖此数据集。
 
 ### 2.2 模型训练（`scripts/train.py`）
 
-将示例配置复制到独立实验目录（例如 `runs/my_exp/config.json`）后启动训练：
+将示例配置复制到独立实验目录（例如 `runs/my_exp/config.json`）后启动训练，或直接基于 `runs/example/` 下的实际示例目录配合 `--output-dir` 运行以免污染示例目录：
 
 ```powershell
-python scripts/train.py --config runs/example/mlp
-python scripts/train.py --config runs/example/deepsets
-python scripts/train.py --config runs/example/ppinn
+python scripts/train.py --config runs/example/mlp_uniform_24 --output-dir runs/my_mlp_uniform_24
+python scripts/train.py --config runs/example/deepsets --output-dir runs/my_deepsets
+python scripts/train.py --config runs/example/ppinn --output-dir runs/my_ppinn
 ```
 
 支持通过命令行临时覆盖配置项：
 
 ```powershell
-python scripts/train.py --config runs/my_mlp --output-dir runs/my_mlp_v2 --epochs 100 --seed 42 --device cuda
+python scripts/train.py --config runs/my_mlp_uniform_24 --output-dir runs/my_mlp_v2 --epochs 100 --seed 42 --device cuda
 ```
 
 具体要求与约定：
@@ -138,25 +146,41 @@ python scripts/train.py --config runs/my_mlp --output-dir runs/my_mlp_v2 --epoch
 - 必须确保 `train_re`、`val_re` 与锁定测试集 `test_re`（`14250, 16250`）严格互斥；训练过程绝不读取 `test_re`。
 - 默认将最优权重（`best_mlp.pt` / `best_deepsets.pt` / `best_ppinn.pt`，内含模型权重与归一化器统计量）及 `history.json` 保存在 `--output-dir`（默认与 `config.json` 同目录），且**不覆写原 `config.json`**。
 
-### 2.3 模型推理（`scripts/infer.py`）
+### 2.3 训练损失可视化（`scripts/plot_loss.py`）
 
-根据配置中的 `mode` 执行三种推理路径，支持直接指定 `runs/example/infer_*` 或自定义推理 `config.json`：
+训练完成后，读取训练输出目录或 `history.json` 绘制损失、学习率与验证指标收敛曲线（默认输出为同目录下的 `loss_curve.png`）：
+
+```powershell
+python scripts/plot_loss.py --history runs/example/mlp_uniform_24
+python scripts/plot_loss.py --history runs/example/deepsets
+python scripts/plot_loss.py --history runs/example/ppinn
+```
+
+可选参数与说明：
+- `--output`：自定义输出图像路径或目录；`--task`：指定任务类型（默认 `auto` 自动识别）；`--linear`：纵轴改用线性坐标（默认对数坐标）；`--dpi`：图像分辨率（默认 `180`）。
+- 对于启用了渐增 `pde_weight_schedule` 预热的 `pPINN` 训练，建议结合 `loss_curve.png` 与 `history.json` 检查 `best_ppinn.pt` 是否落在纯数据预热期，按需在推理阶段与 `last_ppinn.pt` 进行对比。
+
+### 2.4 模型推理（`scripts/infer.py`）
+
+根据配置中的 `mode` 执行三种推理路径，可直接运行 `runs/example/` 下已有的推理配置示例，或自定义推理 `config.json`：
 
 ```powershell
 # 1. 编码器单独推理（MLP 或 DeepSets）
-python scripts/infer.py --config runs/example/infer_encoder
+python scripts/infer.py --config runs/example/infer_mlp_uniform_24
+python scripts/infer.py --config runs/example/infer_deepsets_uniform_24
 
 # 2. 解码器单独推理（pPINN）
-python scripts/infer.py --config runs/example/infer_decoder
+python scripts/infer.py --config runs/example/infer_ppinn
 
 # 3. 串联推理（编码器 + pPINN，同时输出两者结果）
-python scripts/infer.py --config runs/example/infer_cascade
+python scripts/infer.py --config runs/example/infer_mlp_uniform_24_ppinn
+python scripts/infer.py --config runs/example/infer_deepsets_uniform_24_ppinn
 ```
 
 如需临时替换权重、切换输出路径或在最终评测时指定测试工况 `re_list`：
 
 ```powershell
-python scripts/infer.py --config runs/example/infer_cascade `
+python scripts/infer.py --config runs/example/infer_deepsets_uniform_24_ppinn `
   --encoder-ckpt runs/my_deepsets/best_deepsets.pt `
   --ppinn-ckpt runs/my_ppinn/best_ppinn.pt `
   --re-list 14250 16250 `
@@ -164,25 +188,29 @@ python scripts/infer.py --config runs/example/infer_cascade `
 ```
 
 具体要求与约定：
+- **权重前置依赖（尤其串联模式）**：
+  - `encoder` 模式需要指定 `encoder_ckpt`（`best_mlp.pt` 或 `best_deepsets.pt`）；
+  - `decoder` 模式需要指定 `ppinn_ckpt`（`best_ppinn.pt` 或 `last_ppinn.pt`）；
+  - `cascade` 串联模式必须同时指定**已训练的编码器权重（`--encoder-ckpt` / 配置项 `encoder_ckpt`）**与**已训练的 pPINN 解码器权重（`--ppinn-ckpt` / 配置项 `ppinn_ckpt`）**，例如串联各自训练产物 `runs/my_deepsets/best_deepsets.pt` 与 `runs/my_ppinn/best_ppinn.pt`。
 - **物理量纲输入输出**：所有推理模式的输入（传感器物理读数或物理参数空间）与输出（`Re_hat, St_hat, phase_hat` 与重构流场 `[Ux, Uy, p_kin]`）均为**未无量纲化、未归一化的原始物理量纲**；归一化、串联双归一化器物理桥接与分块前向均在内部完成。
 - **输出内容**：推理结束后将原 `config.json` 原样复制至输出目录，并生成对应 `.npz` 文件：
   - `encoder` → `encoder_pred.npz`（`re_pred`, `st_pred`, `phase_pred`, `phase_sin_pred`, `phase_cos_pred`, `re_id`, `sensor_indices`）
   - `decoder` → `decoder_pred.npz`（`uvp_pred`, `xy`, `re_input`, `st_input`, `phase_input`, `re_id`）
   - `cascade` → `cascade_pred.npz`（同时包含上述编码器预测与解码器流场输出）
 
-### 2.4 后处理与评估（`scripts/postprocess.py`）
+### 2.5 后处理与评估（`scripts/postprocess.py`）
 
-指定推理模式、模型推理输出路径与原始 `.h5` 数据路径，按需计算编码器/流场物理指标并绘制对比云图：
+指定推理模式、模型推理输出路径与原始 `.h5` 数据路径，按需计算编码器/流场物理指标并绘制对比云图（以下路径对应 `runs/example/` 中已有的推理示例）：
 
 ```powershell
 # 编码器后处理
-python scripts/postprocess.py --mode encoder --pred runs/infer_encoder --raw data/processed
+python scripts/postprocess.py --mode encoder --pred runs/example/infer_mlp_uniform_24 --raw data/processed
 
 # 解码器后处理（指定绘图帧下标）
-python scripts/postprocess.py --mode decoder --pred runs/infer_decoder --raw data/processed --frame-idx 0
+python scripts/postprocess.py --mode decoder --pred runs/example/infer_ppinn --raw data/processed --frame-idx 0
 
 # 串联后处理（同时评估编码器与流场，并指定输出目录）
-python scripts/postprocess.py --mode cascade --pred runs/infer_cascade --raw data/processed --output-dir runs/post_cascade
+python scripts/postprocess.py --mode cascade --pred runs/example/infer_deepsets_uniform_24_ppinn --raw data/processed --output-dir runs/post_cascade
 ```
 
 具体要求与约定：
@@ -193,12 +221,12 @@ python scripts/postprocess.py --mode cascade --pred runs/infer_cascade --raw dat
   - `cascade`：同时产出上述两套指标与对比图。
 - 如仅需数值指标无需出图，可追加 `--no-plot`；如需仅评估部分工况，可追加 `--re-list <Re...>`。
 
-### 2.5 单元测试验证
+### 2.6 单元测试验证
 
-验证训练、推理与后处理端到端链路是否正常（全部使用临时目录，不在工作区残留输出）：
+验证训练、损失可视化、推理与后处理端到端链路是否正常（全部使用临时目录，不在工作区残留输出）：
 
 ```powershell
-pytest -v tests/test_training_pipeline.py tests/test_inference_pipeline.py tests/test_postprocess_pipeline.py
+pytest -v tests/test_training_pipeline.py tests/test_plot_loss.py tests/test_inference_pipeline.py tests/test_postprocess_pipeline.py
 ```
 
 ---
