@@ -280,3 +280,74 @@ pytest -v tests/test_training_pipeline.py tests/test_plot_loss.py tests/test_inf
 - **实验设计**：
   - **搜索策略**：基于在候选池（`cand60` 或 504 壁面点）上训练好的单一 `DeepSets` 模型，在验证集 `val_re` 上执行序列贪心选位（前向逐步添加 $0 \to K$ 或后向逐步剪枝 $N_{\text{cand}} \to K$），以验证集状态预测误差（或经 `pPINN` 串联后的流场重构误差）为选位目标函数，严格避免接触锁定测试集 `test_re`。
   - **对照验证**：在相同预算 $K$ 下，将搜索得到的 `DeepSets-Greedy` 布局与弧长均匀布局（`uniform`）、水动力关键区先验布局（`physics_layout`）对比，并把该最优布局迁移给固定布局 `MLP` 与 `SurfacePOD` 进行重训与测试集（`14250 / 16250`）评估，验证“关键测点物理规律可迁移性”及在鱼体头部/肩部/尾柄的测点聚集特征。
+
+### 3.6 实验六：pPINN 不同 PDE 配点重采样策略及物理一致性验证
+
+- **研究目的**：对比不同 PDE 配点刷新频率对 5 维 `(x*, y*, Re, St, φ)` 空间物理残差覆盖度、训练耗时与流场重构精度的影响，并通过独立的物理一致性指标验证模型是否真正满足控制方程而非仅过拟合固定配点。
+- **实验设计**：
+  - **自变量**：`training.resample_collocation_mode`，对比三种策略：
+    - `fixed`：训练全程使用同一批固定配点（验证固定点集是否导致“局部过拟合配点、未采样区残差偏高”）；
+    - `epoch`：每个 epoch 重新采样一次配点（当前默认，兼顾空间覆盖与采样开销）；
+    - `batch`：每个梯度更新 step / batch 重新采样一次配点（在当前 `PPINNTrainer` 中每步对应一个监督 `batch`，即每 step / batch 均刷新配点）。
+  - **控制变量**：固定 `n_collocation`、`collocation_method`（如 `latin_hypercube`）、`collocation_re_st_mode`、`pde_weight_schedule`、网络结构与随机种子。
+  - **评估路径（数据精度 + 物理一致性双验证）**：
+    - **流场重构精度**：`decoder` 单独推理 + `cascade` 串联推理（全 ROI 与尾流区速度/Gauge 压强相对 $L_2$）；
+    - **物理一致性验证**：在未参与训练的测试工况 `test_re = [14250, 16250]` 全 ROI 网格及独立加密 5D 测试配点集上，调用自动微分物理残差接口计算 X 动量残差 $r_u$、Y 动量残差 $r_v$ 与连续性散度残差 $r_c = \nabla \cdot \mathbf{u}^*$ 的均方根（RMS）及空间分布图，同时记录各策略单轮训练耗时（`wall_time_seconds`）以衡量精度-算力权衡。
+  - **代码衔接备注**：训练期配点重采样（`fixed` / `epoch` / `batch`）与 `losses.compute_pde_residuals` 已原生支持；正式开展物理一致性验证前，需在 `postprocess.py`（或独立评估脚本）补充基于已保存 `best_ppinn.pt` / `last_ppinn.pt` 对测试集计算独立 PDE 残差 $(r_u, r_v, r_c)$ 的评估流程。
+
+### 3.7 实验七：不同学习率调度策略对 MLP、DeepSets 与 pPINN 的影响
+
+- **研究目的**：评估不同学习率衰减机制对三类模型收敛速度、验证集震荡幅度、最优轮次（`best_epoch`）以及最终泛化精度的影响，验证当前默认 `cosine` 余弦退火相比固定学习率或其他衰减策略的收益。
+- **实验设计**：
+  - **自变量**：`training.lr_scheduler.strategy`，统一对比：
+    - `constant`（全程恒定学习率）；
+    - `cosine`（当前示例默认余弦退火）；
+    - `step` / `multistep`（阶梯衰减）；
+    - `plateau`（基于验证指标停滞自适应降学习率，仅依赖可观测验证指标）。
+  - **控制变量**：固定初始 `learning_rate`、`num_epochs`、早停设置（建议关闭 `early_stopping.enabled` 以观察完整退火周期，或保持一致的早停配置）、传感器布局及随机种子。
+  - **评估路径**：结合 `scripts/plot_loss.py` 对比训练/验证收敛曲线，并在锁定测试集 `test_re` 上评估 `encoder`、`decoder` 与 `cascade` 指标。
+
+### 3.8 实验八：pPINN 不同 PDE 权重调度训练策略对比
+
+- **研究目的**：对比“纯数据预热后分段递增物理权重”与“全程恒定物理权重”等不同训练课程（curriculum）策略对 pPINN 数据拟合与物理约束平衡的影响，定位两阶段优化中 `best_ppinn.pt` 与 `last_ppinn.pt` 的精度差异来源。
+- **实验设计**：
+  - **自变量**：`training.pde_weight_schedule.strategy` 及对应阶段参数：
+    - `constant`：全程保持恒定 `lambda_phys`（无预热，从第 1 轮起直接联合优化数据与 PDE 残差）；
+    - `cosine`：当前默认分段策略（前 15% 轮次 `start_weight = 0.0` 纯数据预热，中期余弦爬坡至 `1.0`，后期满权重联合收敛）；
+    - `linear` / `step`：线性爬坡或阶梯增权策略作为对照；
+    - 可选对照 `lambda_phys = 0.0`（纯数据驱动基线）。
+  - **控制变量**：固定最终目标 `lambda_phys`、配点模式（`epoch`）、网络结构与余弦学习率调度，并固定同一上游编码器权重用于串联对比。
+  - **评估路径**：同时评测每组实验保存的 **`best_ppinn.pt` 与 `last_ppinn.pt`**（避免预热期末尾因尚未施加满权重物理约束而出现虚低数据误差导致选优偏差），对比 `decoder` 精度、`cascade` 精度及独立测试集 PDE 物理残差。
+
+### 3.9 实验九：DeepSets 训练期动态子集池尺度策略对泛化性的影响
+
+- **研究目的**：探究 DeepSets 在每个 batch 随机采样传感器子集时，训练期子集预算池 `training_sensor_counts` 的范围大小（以及候选总池尺度）对模型在**已见预算、内插未见预算与外推极端稀疏/稠密预算**下泛化能力的规律。
+- **实验设计**：
+  - **自变量一（训练预算池尺度 `data.training_sensor_counts`）**：在固定候选池 `cand60` 下，对比不同跨度的训练预算组合（每个 batch 从池中循环随机抽取一个大小 $K$）：
+    - 单预算 / 固定规模组：如 `training_sensor_counts = [24]`（或 `random_subset = false` 全池 60 点训练）；
+    - 窄区间局部池：如 `[12, 24, 36]`；
+    - 当前基准池：`[6, 12, 24, 36, 48]`；
+    - 宽区间跨尺度池：如 `[3, 6, 12, 18, 24, 36, 48, 60]`。
+  - **自变量二（可选扩展）**：对比不同候选总池 `data.sensor_pool`（`cand60` 60 点 vs `all` 504 全壁面点）以及是否叠加 `data.token_dropout_prob` 对跨尺度泛化的影响。
+  - **评估路径**：在 `test_re = [14250, 16250]` 上覆盖**内插未见预算**（如 $K \in \{9, 15, 30, 42\}$）、**外推预算**（如极稀疏 $K=4$ 与满池 $K=60$）以及跨多种随机布局和等弧长布局，评估 `encoder` 精度与 `cascade` 流场重构精度。
+
+### 3.10 实验十：DeepSets 集合聚合方式与计数特征消融
+
+- **研究目的**：揭示不同置换不变聚合算子与显式传感器数量特征对 `DeepSets` 跨预算泛化性能的影响机理，验证当前 `mean+max` 拼接归一化计数特征的设计优势。
+- **实验设计**：
+  - **自变量一（集合池化方式 `model.pool`）**：对比 `mean+max`（当前默认）、`mean`、`max`、`sum` 四种置换不变聚合算子（其中 `sum` 对集合规模 $K$ 敏感，而 `mean` / `max` 具有尺度不变性）。
+  - **自变量二（计数特征开关 `model.use_count_feature`）**：对比开启（拼接归一化有效传感器数量 `cnt / candidate_count`）与关闭（仅保留聚合嵌入）的影响。
+  - **控制变量**：固定候选池 `cand60`、训练子集池 `training_sensor_counts`、隐藏层宽度（`phi_hidden` / `rho_hidden`）、激活函数、学习率调度与随机种子，并固定同一份最优 `pPINN` 权重用于串联推理。
+  - **评估路径**：在 `test_re = [14250, 16250]` 上分预算（如 $K \in \{6, 12, 24, 36, 48, 60\}$）统计 `encoder` 误差与 `cascade` 流场重构误差，比较跨尺度稳定性。
+
+### 3.11 实验十一：表面传感器物理通道消融（仅压强 vs 仅速度 vs 全通道）
+
+- **研究目的**：针对水下仿生传感器的工程部署约束（如人工侧线通常仅易采集表面压力，而难以同步测得近壁二维速度），评估单类物理量传感信息是否足以支撑全局状态识别（`Re / St / Phase`）与高精度尾流场重构。
+- **实验设计**：
+  - **自变量**：传感器输入物理通道组合，对比三组配置：
+    - 仅运动压强通道 `[p_kin]`（1 通道）；
+    - 仅近壁速度通道 `[Ux, Uy]`（2 通道）；
+    - 完整物理读数 `[Ux, Uy, p_kin]`（当前默认 3 通道）。
+  - **对比模型**：在相同测点布局（如 `cand60` 内 24 点均匀布局及不同预算 $K$）下横向对比 `MLP`、`DeepSets` 与同通道输入的 `SurfacePOD` 基线。
+  - **评估路径**：`encoder` 原始精度（重点观察 `Re` 与相位对压强梯度/速度切变的敏感性差异）+ `cascade` 串联流场重构精度 + `SurfacePOD` 同通道重构对比。
+  - **代码衔接备注**：当前训练与推理数据接口默认按全 3 通道 `[Ux, Uy, p_kin]` 构建输入（`DeepSets` `in_dim = 5`，`MLP` `input_dim = 3*K`）；正式开展本实验前，需在 `encoder_loader.py`、`inference/data.py` 与 `config.py` 中补充 `sensor_channels`（如 `["p_kin"]` / `["Ux", "Uy"]` / `["Ux", "Uy", "p_kin"]`）配置解析与动态输入维度适配，并在 `SurfacePOD` 基线中保持同通道输入口径。
